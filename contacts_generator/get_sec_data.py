@@ -1,7 +1,8 @@
 import requests
 import json
 
-API_KEY = 'cafc16655d477253b856fa133948f420fe2b0a8a3f53ac10e0816d92db7e8d66'
+with open('sec_api_key.txt') as f:
+    API_KEY = f.readline()
 
 def get_companies_by_exchange(exchange):
     url = f'https://api.sec-api.io/mapping/exchange/{exchange}'
