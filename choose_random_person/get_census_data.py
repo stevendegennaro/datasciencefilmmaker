@@ -12,13 +12,15 @@ BASE_URL = 'https://api.census.gov/data/2020/dec/pl'
 
 # Check if we already have a list of states and their populations
 if os.path.isfile('data/states.csv'):
-		states_df = pd.read_csv('data/states.csv',dtype={'state': str})
-		states_df.set_index('state', inplace=True)
+	# If so, read it in
+	states_df = pd.read_csv('data/states.csv',dtype={'state': str})
+	states_df.set_index('state', inplace=True)
 # If not, get it
 else:
 	PARAMS = {
 		'get': 'NAME,P1_001N',
-		'for': 'state:*'
+		'for': 'state:*',
+		'key': API_KEY
 	}
 	response = requests.get(BASE_URL, params=PARAMS)
 	if response.status_code == 200:
@@ -36,11 +38,12 @@ else:
 	else:
 		print(f'Error {response.status_code}: {response.text}')
 
+	# Output the dataframe to a file
 	states_df.to_csv('data/states.csv')
-
 
 # Check if we already have a list of counties and their populations
 if os.path.isfile('data/counties.csv'):
+	# If so, read it in
 	counties_df = pd.read_csv('data/counties.csv',dtype={'state': str,'county':str})
 	counties_df.set_index(['state', 'county'], inplace=True)
 
@@ -71,7 +74,7 @@ else:
 	# Output to file
 	counties_df.to_csv('data/counties.csv')
 
-# Check to see if the state populations match the summed populations of the counties
+# Check to see if the total state populations match the summed populations of the counties
 assert (counties_df.groupby(level='state').sum()['population'] - states_df['population'] == 0).all()
 
 # Check if the blocks file has already been created, if not, create it
@@ -99,6 +102,8 @@ for index, row in counties_df.iloc[START:].iterrows():
 			}
 
 	response = requests.get(BASE_URL, params=PARAMS)
+	# This shouldn't be necessary if you are using an API key. If not, the API
+	# will limit the number of calls in a certain period of time
 	while response.status_code == 429:
 		print("sleeping")
 		time.sleep(2)
@@ -122,6 +127,7 @@ for index, row in counties_df.iloc[START:].iterrows():
 		assert row['population'] == blocks_df['P1_001N'].sum(), \
 						f"Sums do not match: {row['population']} {blocks_df['P1_001N'].sum()}"
 	else:
+		# Ideally, this shouldn't happen either
 		print(response.status_code)
 		sys.exit()
 

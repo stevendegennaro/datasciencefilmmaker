@@ -1,7 +1,11 @@
 import pandas as pd
 from collections import Counter
 from matplotlib import pyplot as plt
-import sys
+
+### Tests the census data that we downloaded for internal consistency,
+### then draws random blocks from the data weighted by population and compares
+### them to the actual populations of those blocks. If working properly,
+### this should just be a straight line though the origin (with scatter)
 
 # Read in the dataframes for the states and the blocks
 blocks_df = pd.read_csv('data/blocks.csv',dtype={'FIPS': str})
