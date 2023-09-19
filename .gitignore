@@ -1,2 +1,4 @@
-contacts_generator/sec_api_key.txt
-stop_n_grab_map/html and javascript/google_api_key.txt
+draw_random_person/data
+draw_random_person/junk
+*api_key*
+*__pycache__*
