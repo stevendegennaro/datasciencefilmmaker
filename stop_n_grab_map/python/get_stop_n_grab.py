@@ -1,6 +1,7 @@
 import googlemaps
 import json
 import time
+from typing import Dict
 
 # so as not to expose my api key publicly:
 with open('google_api_key.txt') as f:
@@ -9,8 +10,8 @@ gmaps = googlemaps.Client(key=API_KEY)
 
 # Get a list of locations within a given radius of a center
 # The actual store names that I used are redacted for the purposes of sharing the code
-store = (<redacted>,<redacted>,<redacted>)
-def fetch_places_nearby(location, radius):
+store = ('<redacted>','<redacted>','<redacted>')
+def fetch_places_nearby(location: Dict, radius: float) -> Dict:
 	places = []
 	# for each of my real stores
 	for store in stores:
@@ -74,6 +75,7 @@ def check_location(lat):
 # search for each of the stores, and print out the results in a json file
 # that can be read by javascript
 filename="stop_n_grab_list.json"
+filename="temp.json"
 with open(filename,"w") as f:
 	f.write("[")
 	# For each set of GPS coordinates
