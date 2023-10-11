@@ -3,6 +3,7 @@ import numpy as np
 import fiona
 from shapely.geometry import Polygon, Point, shape
 import matplotlib.pyplot as plt
+import json
 import sys
 
 # Function to randomly choose a latitude and longitude within a given ploygon
@@ -15,7 +16,7 @@ def get_random_location(polygon: Polygon) -> Point:
 	while not point.within(polygon):
 		# Keep drawing until it is
 		point = Point([np.random.uniform(min_x, max_x), np.random.uniform(min_y, max_y)])
-	return point    
+	return point
 
 def load_hash(seed:int = None) -> None:
 	# If the user provides a seed, use it.
@@ -84,3 +85,21 @@ def test_shape(person,n):
 	plt.xlabel("Longitude")
 	plt.ylabel("Latitude")
 	plt.show()
+
+def create_cameras_json(n_samples: int = 100):
+	load_hash()
+	cameras = get_random_people(n_samples)
+	cameras_dict_list = []
+	for index,row in cameras.iterrows():
+		try:
+			cameras_dict_list.append({'lat':row['location'].y,
+								      'lng':row['location'].x,
+								      'radius':np.random.normal(1200,100)})
+		except:
+			print(row)
+			sys.exit()
+	with open('../html and javascript/camera_list.json','w') as f:
+		json.dump(cameras_dict_list,f)
+	# print(cameras_dict_list)
+
+
