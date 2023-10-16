@@ -2,7 +2,7 @@ import pandas as pd
 import geopandas as gpd
 
 # Uses the blocks.csv file and the shape files for each state and
-# creates a hash table so that we can look up the shapefile
+# creates a lookup table so that we can look up the shapefile
 # quickly by row number if we know the FIPS #.
 
 blocks_df = pd.read_csv('data/blocks.csv',dtype={'FIPS': str})
@@ -25,18 +25,18 @@ for state in states_df.index[2:]:
 	gdf = gdf.rename(columns = {'index':'line'})
 	
 	# Create a new df with just the info we want
-	hash_df = gdf.loc[:,['FIPS','line']]
+	lookup_df = gdf.loc[:,['FIPS','line']]
 	
 	# Set index to FIPS and sort
-	hash_df.set_index('FIPS',inplace=True)
-	hash_df.sort_index(inplace=True)
+	lookup_df.set_index('FIPS',inplace=True)
+	lookup_df.sort_index(inplace=True)
 	
 	# Join with the blocks_df (which contains the population info)
-	hash_df = hash_df.join(blocks_df,how='inner')
-	print(hash_df)
+	lookup_df = lookup_df.join(blocks_df,how='inner')
+	print(lookup_df)
 	
 	# write (or append) to the file
 	if state == '01':
-		hash_df.to_csv('data/hash.csv',mode='w')
+		lookup_df.to_csv('data/lookup.csv',mode='w')
 	else:
-		hash_df.to_csv('data/hash.csv',mode='a',header=False)
+		lookup_df.to_csv('data/lookup.csv',mode='a',header=False)
