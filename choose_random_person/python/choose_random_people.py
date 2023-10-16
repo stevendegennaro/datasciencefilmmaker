@@ -32,7 +32,10 @@ def load_lookup(seed:int = None) -> None:
 
 # Function to use the lookup table to draw a random group of 
 # lattitudes and longitudes in the U.S., weighted by population 
+# Requires call to load_lookup() first
 def get_random_people(n_samples:int = 25) -> pd.DataFrame:
+
+	global lookup_df
 
 	print(f"Drawing {n_samples} samples")
 	sample = lookup_df.sample(n_samples,weights='population',replace=True)
