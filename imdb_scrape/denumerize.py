@@ -1,3 +1,5 @@
+### Adapted from https://github.com/davidsa03/numerize
+
 def denumerize(n):
 	try:
 		sufixes = [ "", "K", "k", "M", "B", "T", "Qa", "Qu", "S", "Oc", "No", 
