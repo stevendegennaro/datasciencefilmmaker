@@ -52,47 +52,47 @@ cv2.imwrite("images/" + moviefile[5:-4] + "_stretched.png", image/np.max(image)*
 # Check to see if we've already processed this video
 datafile = moviefile[:-4] + '.dat'
 if not os.path.isfile(datafile):
-	print("Writing video to .dat file")
+    print("Writing video to .dat file")
 
-	# Create a memmap to store the data for each frame
-	frames = np.memmap(datafile,
-					   mode='w+', 
-					   shape = shape)
-	count = 0;
+    # Create a memmap to store the data for each frame
+    frames = np.memmap(datafile,
+                       mode='w+', 
+                       shape = shape)
+    count = 0;
 
-	# for each frame in the file:	
-	while success:
-		print(f"Reading frame {count}")
-		frames[count,:] = image   		# store frame in memmap
-		success,image = vidcap.read() 	# read the next frame
-		if (success): 					# if there is a next frame, then
-			count += 1 					# add one to the count
-		else:							# if not, then
-			break						# we're done reading in frames
+    # for each frame in the file:   
+    while success:
+        print(f"Reading frame {count}")
+        frames[count,:] = image         # store frame in memmap
+        success,image = vidcap.read()   # read the next frame
+        if (success):                   # if there is a next frame, then
+            count += 1                  # add one to the count
+        else:                           # if not, then
+            break                       # we're done reading in frames
 
-		#rotate and crop and go back to the top of the loop
-		image = image[ylims[0]:ylims[1],xlims[0]:xlims[1]]
-		if rotate: image = np.rot90(image,2)
+        #rotate and crop and go back to the top of the loop
+        image = image[ylims[0]:ylims[1],xlims[0]:xlims[1]]
+        if rotate: image = np.rot90(image,2)
 
-	print("flushing .dat file")
-	frames.flush()					# flush and delete this memmap object
-	del frames 						# (necessary because we want to bring
-	print(".dat file written")		# the .dat file back in as read-only)
+    print("flushing .dat file")
+    frames.flush()                  # flush and delete this memmap object
+    del frames                      # (necessary because we want to bring
+    print(".dat file written")      # the .dat file back in as read-only)
 
 print("calculating mean and normalizing")
-frames = np.memmap(datafile, 		# create new memmap pointing to the 
-				   mode='r', 		# file we just wrote in the loop above
-				   shape = shape)	# (or wrote earlier)
+frames = np.memmap(datafile,        # create new memmap pointing to the 
+                   mode='r',        # file we just wrote in the loop above
+                   shape = shape)   # (or wrote earlier)
 
-frames = frames[30:-30]				# drop first and last second (often shaky)
-mean = np.memmap.mean(frames,axis=0) 	# get the mean
-mean = mean/np.max(mean)*255			# stretch it to the full dynamic range
+frames = frames[30:-30]             # drop first and last second (often shaky)
+mean = np.memmap.mean(frames,axis=0)    # get the mean
+mean = mean/np.max(mean)*255            # stretch it to the full dynamic range
 
 # write to an image file
 cv2.imwrite("images/" + moviefile[5:-4] + "_mean.png", mean)
 
 # Do the same for median
-median = np.median(frames,axis=0) 	# get the mean
+median = np.median(frames,axis=0)   # get the mean
 median = median/np.max(median)*255
 cv2.imwrite("images/" + moviefile[5:-4] + "_median.png", median)
 
