@@ -15,13 +15,13 @@ states_df.set_index('state', inplace=True)
 # Check to see that the total of blocks for each state matches the state population
 print("Checking totals")
 for STATE_FIPS in states_df.index:
-	print(STATE_FIPS)
-	assert blocks_df.loc[blocks_df['FIPS'].str.startswith(STATE_FIPS),'population'].sum() \
-			== states_df.loc[STATE_FIPS,'population'], \
-			# if not, output error message and quit
-			f"Populations for {states_df.loc[STATE_FIPS,'NAME']} do not match:  \
-			{blocks_df.loc[blocks_df['FIPS'].str.startswith(STATE_FIPS),'population'].sum()} \
-			{states_df.loc[STATE_FIPS,'population']}"
+    print(STATE_FIPS)
+    assert blocks_df.loc[blocks_df['FIPS'].str.startswith(STATE_FIPS),'population'].sum() \
+            == states_df.loc[STATE_FIPS,'population'], \
+            # if not, output error message and quit
+            f"Populations for {states_df.loc[STATE_FIPS,'NAME']} do not match:  \
+            {blocks_df.loc[blocks_df['FIPS'].str.startswith(STATE_FIPS),'population'].sum()} \
+            {states_df.loc[STATE_FIPS,'population']}"
 
 total_pop = blocks_df['population'].sum()
 
