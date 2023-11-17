@@ -157,15 +157,12 @@ pd.set_option('display.max_rows', None)
 
 #check if it's a common abbreviation
 for i in range(len(full_names)):
-
     initials = full_names['First'][i][0] + full_names['Middle'][i][0]
-
     full_names['Email'][i] = generate_email(i)
 
     #get rid of most middle names. For the ones we keep, combine with the first name
     if full_names['Middle'][i] in common_middles:
         full_names['First'][i] = full_names['First'][i] + ' ' + full_names['Middle'][i]
-        # print(full_names['Middle'][i])
     full_names['Middle'][i] = ''
 
     if initials in nicknames:

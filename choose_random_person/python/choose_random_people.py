@@ -43,8 +43,10 @@ def get_random_people(n_samples:int = 25) -> pd.DataFrame:
     sample['location'] = None
 
     print("Drawing locations")
-    for index,person in sample.iterrows():       # For each of the blocks we just drew
-        # Open the file for that person's state and get the boundaries of the person's block
+    for index,person in sample.iterrows():
+        # For each of the blocks we just drew
+        # Open the file for that person's state and 
+        # get the boundaries of the person's block
         state = person['FIPS'][:2]
         filename = 'data/TIGER/tl_2020_' + state + '_tabblock20/tl_2020_' + state + '_tabblock20.shp'
         with fiona.open(filename, 'r') as source:
