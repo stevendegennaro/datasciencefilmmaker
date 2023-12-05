@@ -61,11 +61,15 @@ def train(model: Model,
           lossesfile,
           plot_losses = False):
 
+    start_time = datetime.now()
+    print(f"Training start time = ",start_time.strftime('%H:%M:%S'))
+
     for epoch in range(n_epochs):
         epoch_loss = 0
         np.random.shuffle(train_names)
         batch = train_names[:batch_size]
         for name in tqdm.tqdm(batch):
+        # for name in batch:
             model.layers[0].reset_hidden_state()
             model.layers[1].reset_hidden_state()
             for prev,nexts in zip(name,name[1:]):
@@ -79,10 +83,11 @@ def train(model: Model,
         accuracy = calculate_accuracy(model, test_names, vocab) \
                     if len(test_names) \
                     else calculate_accuracy(model, train_names, vocab)
-        print(f"Epoch: {epoch}  Epoch Loss: {epoch_loss}  Accuracy: {accuracy}")
+        batch_time = datetime.now() - start_time
+        print(f"Epoch: {epoch}  Epoch Loss: {epoch_loss}  Accuracy: {accuracy}  Elapsed Time: {batch_time}")
         sample_name = generate(model, vocab)
         print("Sample name: ",sample_name)
-        total_time = (datetime.now() - start_time + elapsed_time).total_seconds()
+        total_time = (batch_time + elapsed_time).total_seconds()
         losses.loc[len(losses)] = [epoch,total_time, epoch_loss, accuracy, sample_name]
         save_weights(model,weightfile)
         if lossesfile:
@@ -90,6 +95,10 @@ def train(model: Model,
                 losses.to_csv(f, index = False)
         if plot_losses:
             plot_loss(losses)
+
+    end_time = datetime.now()
+    difference = end_time - start_time
+    print(f"Total training time = ",difference)
 
 def generate(model: Model, 
              vocab: Vocabulary, 
@@ -200,19 +209,9 @@ def analyze_network(n_epochs,
                      learning_rate = 0.01, 
                      batch_size = None, 
                      cont = False):
-    ### change analyze to analyze throughout
 
-    global start_time
     global elapsed_time
-    start_time = datetime.now()
-
     global fig
-    fig, ax = plt.subplots()
-    plt.ion()
-    plt.show()
-
-
-    print(start_time)
 
     # Load the shuffled names
     shufflefile="data/shuffled_names.json"
@@ -224,16 +223,26 @@ def analyze_network(n_epochs,
 
     runs = ['firstnames','lastnames']
     runs = ['firstnames']
-
-    start_time = datetime.now()
-    print(f"Start time = ",start_time.strftime('%H:%M:%S'))
+    runs = ['lastnames']
 
     for run in runs:
+
         n_train = int(np.floor(len(names[run]) * 0.8))
         train_names = names[run][:n_train]
         test_names = names[run][n_train:]
         if not batch_size:
             batch_size = len(train_names)
+
+        fig, ax = plt.subplots()
+        ax.set_xlabel("Time in Seconds")
+        ax.set_ylabel("Accuracy")
+        title = f"Scratch Network Trained on "
+        title += f"{'First Names' if run == 'firstnames' else 'Last Names'}\n"
+        title += f"Batch Size = {batch_size}, Learning Rate = {learning_rate}"
+        ax.set_title(title)
+        plt.ion()
+        plt.show()
+
         model = create_model(vocab, learning_rate = learning_rate)
         weightfile = f'weights/{run}_{learning_rate}_{batch_size}_weights.txt'
         lossesfile = f'weights/{run}_{learning_rate}_{batch_size}_history.txt'
@@ -255,8 +264,7 @@ def analyze_network(n_epochs,
               lossesfile = lossesfile,
               plot_losses = True)
 
-    end_time = datetime.now()
-    difference = end_time - start_time
-    print(f"Total run time = ",difference)
-    plt.ioff()
+        plt.ioff()
+
+
 
