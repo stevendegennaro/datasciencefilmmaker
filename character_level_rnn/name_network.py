@@ -11,20 +11,21 @@ import csv
 import matplotlib.pyplot as plt
 import pandas as pd
 
-# np.random.seed(1)
+def import_names(namesfile="data/all_names.json"):
+    # Define the start and end characters of every name
+    global START, STOP
+    START = "^"
+    STOP = "$"
 
-# Define the start and end characters of every name
-START = "^"
-STOP = "$"
+    # Import the names from the file and put into lists
+    with open(namesfile,"r") as f:
+        entries = json.load(f)
+    players = [Player(entry) for entry in entries]
+    firstnames = [(START + player.firstname + STOP) for player in players if player.firstname is not None]
+    lastnames = [(START + player.lastname + STOP) for player in players]
+    suffixes = [player.suffix for player in players]
 
-#Import the names from the file
-namesfile="data/all_names.json"
-with open(namesfile,"r") as f:
-    entries = json.load(f)
-players = [Player(entry) for entry in entries]
-firstnames = [(START + player.firstname + STOP) for player in players if player.firstname is not None]
-lastnames = [(START + player.lastname + STOP) for player in players]
-suffixes = [player.suffix for player in players]
+    return firstnames, lastnames, suffixes
 
 def calculate_accuracy(model, test_names, vocab):
     n_correct = 0
@@ -32,34 +33,36 @@ def calculate_accuracy(model, test_names, vocab):
     for name in test_names[:100]:
         model.layers[0].reset_hidden_state()
         model.layers[1].reset_hidden_state()
-        for prev,nexts in zip(name,name[1:]):
-            inputs = vocab.one_hot_encode(prev)
-            targets = vocab.one_hot_encode(nexts)
+        for letter,next_letter in zip(name,name[1:]):
+            inputs = vocab.one_hot_encode(letter)
+            targets = vocab.one_hot_encode(next_letter)
             predicted = model.forward(inputs)
             probabilities = softmax(predicted)
             next_char_predicted = vocab.i2w[sample_from(probabilities)]
-            if next_char_predicted == nexts: 
+            if next_char_predicted == next_letter: 
                 n_correct += 1
             count += 1
     accuracy = n_correct / count
     return accuracy
 
-def plot_loss(losses, color = "black"):
+def plot_history(history, color = "black"):
     ax = fig.gca()
-    ax.plot(losses['Time'],losses["Accuracy"], color=color)
+    ax.plot(history['Time'],history["Accuracy"], color=color)
     plt.draw()
     plt.pause(0.1)
 
+#### Training loop, called by other functions
 def train(model: Model, 
-          train_names: List,
-          test_names: List, 
+          train_names: pd.DataFrame,
+          test_names: pd.DataFrame, 
           batch_size: int, 
           n_epochs: int, 
-          weightfile, 
           vocab: Vocabulary,
-          losses,
-          lossesfile,
-          plot_losses = False):
+          history: pd.DataFrame,
+          history_file: str,
+          weight_file: str,
+          plot_histories: bool = False
+         ):
 
     start_time = datetime.now()
     print(f"Training start time = ",start_time.strftime('%H:%M:%S'))
@@ -69,32 +72,38 @@ def train(model: Model,
         np.random.shuffle(train_names)
         batch = train_names[:batch_size]
         for name in tqdm.tqdm(batch):
-        # for name in batch:
             model.layers[0].reset_hidden_state()
             model.layers[1].reset_hidden_state()
-            for prev,nexts in zip(name,name[1:]):
-                inputs = vocab.one_hot_encode(prev)
-                targets = vocab.one_hot_encode(nexts)
+            for letter,next_letter in zip(name,name[1:]):
+                inputs = vocab.one_hot_encode(letter)
+                targets = vocab.one_hot_encode(next_letter)
                 predicted = model.forward(inputs)
                 epoch_loss += model.loss.loss(predicted,targets)
                 gradient = model.loss.gradient(predicted,targets)
                 model.backward(gradient)
                 model.optimizer.step(model)
+
+        # Calculate the accuracy using the testing data if it exists,
+        # Otherwise, calculate the accuracy using the trianing data
         accuracy = calculate_accuracy(model, test_names, vocab) \
-                    if len(test_names) \
+                    if test_names \
                     else calculate_accuracy(model, train_names, vocab)
+
+        # Output various parameters to the screen
         batch_time = datetime.now() - start_time
         print(f"Epoch: {epoch}  Epoch Loss: {epoch_loss}  Accuracy: {accuracy}  Elapsed Time: {batch_time}")
         sample_name = generate(model, vocab)
         print("Sample name: ",sample_name)
         total_time = (batch_time + elapsed_time).total_seconds()
-        losses.loc[len(losses)] = [epoch,total_time, epoch_loss, accuracy, sample_name]
-        save_weights(model,weightfile)
-        if lossesfile:
-            with open(lossesfile, 'w') as f:
-                losses.to_csv(f, index = False)
-        if plot_losses:
-            plot_loss(losses)
+
+        # Append data to the end of history DataFrame and output/plot as requested
+        history.loc[len(history)] = [epoch, total_time, epoch_loss, accuracy, sample_name]
+        if history_file:
+            with open(history_file, 'w') as f:
+                history.to_csv(f, index = False)
+        if plot_histories:
+            plot_history(history)
+        save_weights(model,weight_file)
 
     end_time = datetime.now()
     difference = end_time - start_time
@@ -133,33 +142,83 @@ def create_model(vocab, HIDDEN_DIM = 32, learning_rate = 0.01):
     model = Model([rnn1,rnn2,linear],loss,optimizer)
     return model
 
-def train_network_full():
-    np.random.seed(1)
-    names = lastnames
-    weightfile = "weights/weights.txt"
-    vocabfile = "weights/vocab.txt"
+#### Main method to train a network from scratch 
+#### or continue from a previous training session
+def train_network(which_names = 'lastnames', 
+                  tr = True, 
+                  cont = False, 
+                  gen = True,
+                  seed = None,
+                  batch_size = None,
+                  n_epochs = 10,
+                  plot = True):
 
-    tr = True       # train first
-    cont = False    # continue training from previous weights
-    gen = True      # generate names when done training
+    # tr =  train the network
+    # cont = continue training from previous weights
+    # gen = generate names when done training
 
-    if cont:
-        vocab = load_vocab(vocabfile)
+    # These are used to plot our progess during training
+    global elapsed_time
+    global fig
+
+    if seed: np.random.seed(seed)
+
+    # Load in the names of the players and
+    # set the filenames to be used to read/store
+    # vocab info and network weights
+    firstnames, lastnames, suffixes = import_names()
+    if which_names == 'lastnames':
+        names = lastnames
+    elif which_names == 'firstnames':
+        names = firstnames
     else:
-        vocab = get_vocab(names)
-        save_vocab(vocab, vocabfile)
+        assert False, 'Must choose firstnames or lastnames'
+    weight_file = f"weights/{which_names}_weights.txt"
+    history_file = f"weights/{which_names}_history.txt"
 
-    model = create_model(vocab)
+    vocab_file = f"finalweights/vocab.txt"
+    vocab = load_vocab(vocab_file)
 
     # If this is a continuation of a previous training session,
-    # load the weights from that session
-    if cont: load_weights(model,weightfile)
+    # load the vocab and weights from that session
+    # If not, create new ones.
+    if cont:
+        model = create_model(vocab)
+        load_weights(model,weight_file)
+        history = pd.read_csv(history_file)
+        elapsed_time = timedelta(seconds = history["Time"].iloc[-1])
+    else:
+        model = create_model(vocab)
+        history = pd.DataFrame(columns = ["Epoch", "Time","Epoch Loss","Accuracy","Sample Name"])
+        elapsed_time = timedelta(0)
+
+    # If the user hasn't specified a batch size,
+    # train on all of the names for each epoch
+    if not batch_size: batch_size = len(names)
+
+    # Plot during training
+    if plot:
+        fig, ax = plt.subplots()
+        ax.set_xlabel("Time in Seconds")
+        ax.set_ylabel("Accuracy")
+        plt.ion()
+        plt.show()
+        plot_histories = True
+    else:
+        plot_histories = False
 
     # Train the network
-    batch_size = 100   # number of names to use for each round of training
-    # batch_size = len(names)
-    n_epochs = 10      # number of rounds of training
-    if tr: train(model, names, [], batch_size, n_epochs, weightfile, vocab, None)
+    if tr: 
+        train(model = model, 
+              train_names = names,
+              test_names = None, 
+              batch_size = batch_size, 
+              n_epochs = n_epochs, 
+              weight_file = weight_file, 
+              vocab = vocab,
+              history = history,
+              history_file = history_file,
+              plot_histories = plot_histories)
 
     # Generate new names
     if gen:
@@ -168,31 +227,28 @@ def train_network_full():
             generated_names.append(generate(model,vocab))
         print(generated_names)
 
-    with open('generated_test.txt',"a") as f:
-        json.dump(generated_names,f)
+        with open('generated_test.txt',"a") as f:
+            json.dump(generated_names,f)
 
-def generate_players():
+#### Generate a batch of first and last names 
+#### based on final weights from the training sessions
+def generate_players(n_players, file = None):
+    
+    vocab_file = f"finalweights/vocab.txt"
+    vocab = load_vocab(vocab_file)
+    model = create_model(vocab)
     for i in range(2):
-        if i == 0:
-            names = firstnames
-            weightfile = "weights/firstnameweights_all.txt"
-            vocabfile = "weights/firstname_vocab.txt"
-        else:
-            names = lastnames
-            weightfile = "weights/lastnameweights_all.txt"
-            vocabfile = "weights/lastname_vocab.txt"
-
-        vocab = load_vocab(vocabfile)
+        if i == 0: weight_file = "finalweights/firstnames_weights.txt"
+        else: weight_file = "finalweights/firstnames_weights.txt"
 
         # Set up neural network
-        model = create_model(vocab)
-        load_weights(model,weightfile)
+        load_weights(model,weight_file)
 
-        print("Generating names")
+        print(f"Generating {'last' if i else 'first'} names")
         generated_names = []
-        while len(generated_names) < 10000:
+        while len(generated_names) < n_players:
             newname = generate(model, vocab)
-            #if newname not in names: 
+            # print(newname)
             generated_names.append(newname)
 
         if i == 0: generated_first_names = generated_names[:]
@@ -205,28 +261,28 @@ def generate_players():
     for i in range(len(generated_first_names)):
         print(generated_first_names[i],generated_last_names[i],random_suffix())
 
-def analyze_network(n_epochs, 
-                     learning_rate = 0.01, 
-                     batch_size = None, 
-                     cont = False):
+def training_speed_test(n_epochs, 
+                        learning_rate = 0.01, 
+                        batch_size = None, 
+                        cont = False):
 
+    # These are used to plot our progess during training
     global elapsed_time
     global fig
 
     # Load the shuffled names
     shufflefile="data/shuffled_names.json"
-    vocabfile = 'tfweights/vocab_analyze.txt'
+    vocab_file = 'tfweights/vocab_analyze.txt'
     with open(shufflefile,'r') as f:
         names = json.load(f)
-    vocab = load_vocab(vocabfile)
+    vocab = load_vocab(vocab_file)
     print(vocab.w2i)
 
     runs = ['firstnames','lastnames']
-    runs = ['firstnames']
-    runs = ['lastnames']
+    # runs = ['firstnames']
+    # runs = ['lastnames']
 
     for run in runs:
-
         n_train = int(np.floor(len(names[run]) * 0.8))
         train_names = names[run][:n_train]
         test_names = names[run][n_train:]
@@ -244,27 +300,71 @@ def analyze_network(n_epochs,
         plt.show()
 
         model = create_model(vocab, learning_rate = learning_rate)
-        weightfile = f'weights/{run}_{learning_rate}_{batch_size}_weights.txt'
-        lossesfile = f'weights/{run}_{learning_rate}_{batch_size}_history.txt'
+        # weight_file = f'weights/{run}_{learning_rate}_{batch_size}_weights.txt'
+        # history_file = f'weights/{run}_{learning_rate}_{batch_size}_history.txt'
+        weight_file = f'weights/{run}_weights.txt'
+        history_file = f'weights/{run}_history.txt'
         if cont: 
-            load_weights(model,weightfile)
-            losses = pd.read_csv(lossesfile)
-            elapsed_time = timedelta(seconds = losses["Time"].iloc[-1])
+            load_weights(model,weight_file)
+            history = pd.read_csv(history_file)
+            elapsed_time = timedelta(seconds = history["Time"].iloc[-1])
         else:
-            losses = pd.DataFrame(columns = ["Epoch", "Time","Epoch Loss","Accuracy","Sample Name"])
+            history = pd.DataFrame(columns = ["Epoch", "Time","Epoch Loss","Accuracy","Sample Name"])
             elapsed_time = timedelta(0)
         train(model, 
               train_names = train_names,
               test_names = test_names,
               batch_size = batch_size,
               n_epochs = n_epochs,
-              weightfile = weightfile, 
+              weight_file = weight_file, 
               vocab = vocab,
-              losses = losses,
-              lossesfile = lossesfile,
-              plot_losses = True)
+              history = history,
+              history_file = history_file,
+              plot_histories = True)
 
         plt.ioff()
 
+def generation_test(n_players):
+    vocab_file = f"finalweights/vocab.txt"
+    vocab = load_vocab(vocab_file)
+    model = create_model(vocab)
+
+    # Load in the names of the players and
+    # set the filenames to be used to read/store
+    # vocab info and network weights
+    firstnames, lastnames, _ = import_names()
+    firstnames = set([name[1:-1] for name in firstnames])
+    lasstnames = set([name[1:-1] for name in lastnames])
+
+    names = {'firstnames': firstnames,'lastnames':lastnames}
+
+    for key in names:
+        weight_file = f"finalweights/{key}_weights.txt"
+
+        # Set up neural network
+        load_weights(model,weight_file)
+
+        start_time = datetime.now()
+        print(f"Generating {key} names",start_time.strftime('%H:%M:%S'))
+        generated_names = []
+
+        for _ in tqdm.tqdm(range(n_players)):
+            generated_names.append(generate(model, vocab))
+
+        end_time = datetime.now()
+        difference = end_time - start_time
+        print(f"Total generation time = ",difference)
+
+        count = 0
+        for name in tqdm.tqdm(generated_names):
+            if name in names[key]:
+                count += 1
+
+        print(f"{count} names were already in the list ({count/n_players*100}%)")
+        # print(generated_names)
+        # print(names[key])
+
+    # for i in range(len(generated_first_names)):
+    #     print(generated_first_names[i],generated_last_names[i],random_suffix())
 
 
