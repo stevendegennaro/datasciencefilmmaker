@@ -111,11 +111,10 @@ def train(model: Model,
 
 def generate(model: Model, 
              vocab: Vocabulary, 
-             seed_char: str = START, 
              max_len: int = 160) -> str:
     model.layers[0].reset_hidden_state()
     model.layers[1].reset_hidden_state()
-    output = [seed_char]
+    output = [START]
 
     while output[-1] != STOP and len(output) < max_len:
         this_input = vocab.one_hot_encode(output[-1])
@@ -131,14 +130,14 @@ def get_vocab(names):
     vocab = Vocabulary([c for name in names for c in name])
     return vocab
 
-def create_model(vocab, HIDDEN_DIM = 32, learning_rate = 0.01):
+def create_model(vocab, HIDDEN_DIM = 32, learning_rate = 0.01, momentum = 0.9):
     # Set up neural network
     HIDDEN_DIM = 32
     rnn1 = SimpleRnn(input_dim=vocab.size,hidden_dim=HIDDEN_DIM)
     rnn2 = SimpleRnn(input_dim=HIDDEN_DIM,hidden_dim=HIDDEN_DIM)
     linear = Linear(input_dim=HIDDEN_DIM,output_dim=vocab.size)
     loss = SoftMaxCrossEntropy()
-    optimizer = Momentum(learning_rate = learning_rate, momentum=.9)
+    optimizer = Momentum(learning_rate = learning_rate, momentum = momentum)
     model = Model([rnn1,rnn2,linear],loss,optimizer)
     return model
 
@@ -264,7 +263,8 @@ def generate_players(n_players, file = None):
 def training_speed_test(n_epochs, 
                         learning_rate = 0.01, 
                         batch_size = None, 
-                        cont = False):
+                        cont = False,
+                        momentum = 0.9):
 
     # These are used to plot our progess during training
     global elapsed_time
@@ -272,7 +272,7 @@ def training_speed_test(n_epochs,
 
     # Load the shuffled names
     shufflefile="data/shuffled_names.json"
-    vocab_file = 'tfweights/vocab_analyze.txt'
+    vocab_file = 'finalweights/vocab.txt'
     with open(shufflefile,'r') as f:
         names = json.load(f)
     vocab = load_vocab(vocab_file)
@@ -299,11 +299,11 @@ def training_speed_test(n_epochs,
         plt.ion()
         plt.show()
 
-        model = create_model(vocab, learning_rate = learning_rate)
-        # weight_file = f'weights/{run}_{learning_rate}_{batch_size}_weights.txt'
-        # history_file = f'weights/{run}_{learning_rate}_{batch_size}_history.txt'
-        weight_file = f'weights/{run}_weights.txt'
-        history_file = f'weights/{run}_history.txt'
+        model = create_model(vocab, learning_rate = learning_rate, momentum = momentum)
+        weight_file = f'weights/{run}_{learning_rate}_{batch_size}_{momentum}_weights.txt'
+        history_file = f'weights/{run}_{learning_rate}_{batch_size}_{momentum}_history.txt'
+        # weight_file = f'weights/{run}_weights.txt'
+        # history_file = f'weights/{run}_history.txt'
         if cont: 
             load_weights(model,weight_file)
             history = pd.read_csv(history_file)
