@@ -13,6 +13,8 @@ from dsfs_vocab import Vocabulary, save_vocab, load_vocab
 import os
 import sys
 from datetime import datetime
+import tqdm
+from scratch_name_network import import_names
 import matplotlib.pyplot as plt
 
 # Takes a list of weights and returns a random
@@ -31,77 +33,79 @@ def plot_history(hist_df, color = "black"):
     plt.draw()
     plt.pause(0.1)
 
-# Train the nerual network
-def train(model, 
-          vocab, 
-          x, 
-          y, 
-          n_epochs, 
-          batch_size, 
-          validation_split, 
-          checkpoint_path, 
-          model_file,
-          history_file,
-          plot_histories: bool = False):
-
-    hist_df = pd.DataFrame({'epoch': pd.Series(dtype='int'),
+class OutputHistory(keras.callbacks.Callback):
+    def __init__(self, history_file):
+        self.history_file = history_file
+        self.hist_df = pd.DataFrame({'epoch': pd.Series(dtype='int'),
                             'time': pd.Series(dtype='float'),
                             'loss': pd.Series(dtype='float'),
                             'accuracy': pd.Series(dtype='float'),
                             'val_loss': pd.Series(dtype='float'),
-                            'val_accuracy': pd.Series(dtype='float'),
-                            'sample name': pd.Series(dtype='str'),
+                            'val_accuracy': pd.Series(dtype='float')
                            })
 
-    # We train each epoch separately so that we can generate a new name 
-    # after each epoch to see how well the network is doing
-    start_time = datetime.now()
-    for epoch in range(n_epochs):
-        history = model.fit(x, 
-                            y, 
-                            epochs=1, 
-                            batch_size = batch_size, 
-                            validation_split = validation_split)
-        print()
-        print("Generating text after epoch: %d" % epoch)
-        sample_name = generate(model, vocab)
-        print(sample_name)
-        # Save the model after every epoch in case we need to
-        # interrupt and restart
-        print("Saving model")
-        model.save(model_file)
+    def on_train_begin(self, logs={}):
+        self.start_time = datetime.now()
 
-        # Add to history dataframe
-        elapsed_time = (datetime.now() - start_time).total_seconds()
-        row = pd.DataFrame(history.history)
-        hist_df = pd.concat([hist_df,row])
-        hist_df.iloc[-1, hist_df.columns.get_loc('epoch')] = epoch
-        hist_df.iloc[-1, hist_df.columns.get_loc('time')] = elapsed_time
-        hist_df.iloc[-1, hist_df.columns.get_loc('sample name')] = sample_name
-        with open(history_file, mode='w') as f:
-            hist_df.to_csv(f, index = False)
-        if plot_histories: plot_history(hist_df)
+    def on_epoch_end(self, epoch, logs={}):
+        elapsed_time = (datetime.now() - self.start_time).total_seconds()
+        row = pd.DataFrame([logs])
+        row['epoch'] = epoch
+        row['time'] = elapsed_time
+        self.hist_df = pd.concat([self.hist_df,row])
+        with open(self.history_file, mode='w') as f:
+            self.hist_df.to_csv(f, index = False)
 
-    return hist_df
+def scheduler(epoch, lr):
+    if epoch < 25:
+        return 0.01
+    elif epoch < 50:
+        return 0.001
+    else:
+        return 0.0005
 
 # Use the trained network to generate a new name
 def generate(model, vocab):
     # Start with our starting character
     string = START
-    # Keep going until we hit our ending character 
-    # or we reach 100 characters total
-    while string[-1] != STOP and len(string) < maxlen:
-        # Blank vector to hold the one-hot encoded string
-        x_next = np.zeros((1, maxlen, vocab.size))
-        # One-hot encode each character in our string so far...
-        for t, char in enumerate(string):
-            x_next[0, t, vocab.w2i[char]] = 1.0 
-        # predict the next letter
-        probabilities = model.predict(x_next, verbose=0)[0]
+    x = np.zeros((1, maxlen, vocab.size))
+    x[0, 0, vocab.w2i[START]] = 1.0
+
+    # Encode the starting character
+    for t in range(1,maxlen):
+        # Generate the next character
+        probabilities = model.predict(x, verbose=0)[0]
         next_letter = vocab.i2w[sample_from(probabilities)]
         string += next_letter
-    # return the string without the START and STOP characters
-    return string[1:-1]
+
+        # If this is our STOP character, we're done
+        if string[-1] == STOP:
+            return string[1:-1]
+        # If not, then add this to our string and
+        # go back through the loop again.
+        x[0, t, vocab.w2i[string[t]]] = 1.0
+    # If we get here, it means we hit our max length
+    # So return the string without the start character
+    return string[1:]
+
+# # Use the trained network to generate a new name
+# def generate(model, vocab):
+#     # Start with our starting character
+#     string = START
+#     # Keep going until we hit our ending character 
+#     # or we reach maxlen characters total
+#     while string[-1] != STOP and len(string) < maxlen:
+#         # Blank vector to hold the one-hot encoded string
+#         x_next = np.zeros((1, maxlen, vocab.size))
+#         # One-hot encode each character in our string so far...
+#         for t, char in enumerate(string):
+#             x_next[0, t, vocab.w2i[char]] = 1.0 
+#         # predict the next letter
+#         probabilities = model.predict(x_next, verbose=0)[0]
+#         next_letter = vocab.i2w[sample_from(probabilities)]
+#         string += next_letter
+#     # return the string without the START and STOP characters
+#     return string[1:-1]
 
 def split_names():
     #Import the names from the file
@@ -118,20 +122,20 @@ def split_names():
         json.dump(names,f)
     return names
 
-def train_network():
+def train_network(tr = [0,0], 
+                  gn = 20,
+                  learning_rate = 0.01, 
+                  batch_size = None, 
+                  cont = False):
     start_time = datetime.now()
     print(f"Start time = ",start_time.strftime('%H:%M:%S'))
 
-    tr = 10              # Number of epochs to train (0 or False if you don't want to train)
-    gn = 20             # Number of names to generate (0 or False if you don't want to generate names)
-    cont = True         # Continue with previous weights (True or False)
-    batch_size = 128
-    learning_rate = 0.0001
-    vocabfile = f'tfweights/vocab.txt'  # Where to save the vocab file
-
     # Define the start and end characters of every name
+    global START, STOP, maxlen, fig
     START = "^"
     STOP = "$"
+
+    vocabfile = f'finalweights/vocab.txt'  # Where to save the vocab file
 
     #Import the names from the file
     namesfile="data/all_names.json"
@@ -142,23 +146,21 @@ def train_network():
     names['firstnames'] = [(START + player.firstname + STOP) for player in players if player.firstname is not None]
     names['lastnames'] = [(START + player.lastname + STOP) for player in players]
     suffixes = [player.suffix for player in players]
-    if cont:
-        if os.path.isfile(vocabfile):
-            print(f"Loading vocab file ({vocabfile})")
-            vocab = load_vocab(vocabfile)
-        else:
-            print("Vocab file does not exit")
+
+    if os.path.isfile(vocabfile):
+        print(f"Loading vocab file ({vocabfile})")
+        vocab = load_vocab(vocabfile)
     else:
-        print("Generating vocab file")
-        vocab = Vocabulary([c for name in names['firstnames'] for c in name] + \
-                           [c for name in names['lastnames'] for c in name])
-        save_vocab(vocab,vocabfile)
-    print(vocab.w2i)
+        print("Vocab file does not exit")
+        sys.exit()
 
     runs = ['firstnames','lastnames']
     generated_names = {'firstnames':[],'lastnames':[]}
-    for run in runs:
+
+    for r,run in enumerate(runs):
         model_file = f'tfweights/{run}.keras'
+        history_file = f'tfweights/{run}.history'
+        # checkpoint_path = f"tfweights/{run}.keras"
 
         # Build the training set
         print(f"Building training set for {run}")
@@ -201,12 +203,23 @@ def train_network():
             optimizer = keras.optimizers.RMSprop(learning_rate=learning_rate)
             model.compile(loss="categorical_crossentropy", optimizer=optimizer, metrics=['accuracy'])
 
-        if tr:
-            train(tr, batch_size)
+        if tr[r]:
+            output_callback = OutputHistory(history_file)
+            schedule_callback = keras.callbacks.LearningRateScheduler(scheduler)
+            checkpoint_callback = keras.callbacks.ModelCheckpoint(filepath=model_file,
+                                                                 monitor='accuracy',
+                                                                 mode='max',
+                                                                 save_best_only=True)
+            history = model.fit(x, 
+                                y, 
+                                epochs=tr[r], 
+                                batch_size = batch_size, 
+                                callbacks = [output_callback,schedule_callback,checkpoint_callback])
+
         if gn:
             print(f"Generating {run}")
             for _ in range(gn):
-                generated_names[run].append(generate())
+                generated_names[run].append(generate(model,vocab))
 
 
     def random_suffix() -> str:
@@ -221,7 +234,7 @@ def train_network():
     print(f"Total run time = ",difference)
 
 def training_speed_test(n_epochs = 20, 
-                        learning_rate = 0.001, 
+                        learning_rate = 0.01, 
                         batch_size = None, 
                         cont = False,
                         plot_histories = False):
@@ -249,7 +262,6 @@ def training_speed_test(n_epochs = 20,
             plt.show()
 
         model_file = f'tfweights/{run}_{learning_rate}_{batch_size}.keras'
-        checkpoint_path = f"tfweights/{run}.ckpt"
         history_file = f"tfweights/{run}_{learning_rate}_{batch_size}.history"
 
         # Build the training set
@@ -291,62 +303,66 @@ def training_speed_test(n_epochs = 20,
                 ]
             )
             optimizer = keras.optimizers.RMSprop(learning_rate=learning_rate)
-            model.compile(loss="categorical_crossentropy", optimizer=optimizer, metrics=['accuracy'])
+            model.compile(loss="categorical_crossentropy", 
+                          optimizer=optimizer, 
+                          metrics=['accuracy'])
 
         start_time = datetime.now()
         print(f"Start time = ",start_time.strftime('%H:%M:%S'))
 
-        hist_df = train(model = model, 
-                        vocab = vocab,
-                        x = x, 
-                        y = y, 
-                        n_epochs = n_epochs, 
-                        batch_size = batch_size,
-                        validation_split = 0.2,
-                        checkpoint_path = checkpoint_path, 
-                        model_file = model_file,
-                        history_file = history_file,
-                        plot_histories = plot_histories)
+        output_callback = OutputHistory(history_file, model_file)
+        schedule_callback = keras.callbacks.LearningRateScheduler(scheduler)
+        history = model.fit(x, 
+                            y, 
+                            epochs=n_epochs, 
+                            batch_size = batch_size, 
+                            validation_split = 0.2,
+                            callbacks = [output_callback,schedule_callback])
+
+        model.save(model_file)
+
         end_time = datetime.now()
         difference = end_time - start_time
         print(f"Total run time for {run} = ", difference)
 
-# def generation_test(n_players):
-#     vocab_file = f"finalweights/vocab.txt"
-#     vocab = load_vocab(vocab_file)
-#     model = create_model(vocab)
+def generation_test(n_players):
+    vocab_file = f"finalweights/vocab.txt"
+    vocab = load_vocab(vocab_file)
 
-#     # Load in the names of the players and
-#     # set the filenames to be used to read/store
-#     # vocab info and network weights
-#     firstnames, lastnames, _ = import_names()
-#     firstnames = set([name[1:-1] for name in firstnames])
-#     lasstnames = set([name[1:-1] for name in lastnames])
+    # Load in the names of the players and
+    # set the filenames to be used to read/store
+    # vocab info and network weights
+    firstnames, lastnames, _ = import_names()
+    firstnames = set([name[1:-1] for name in firstnames])
+    lasstnames = set([name[1:-1] for name in lastnames])
 
-#     names = {'firstnames': firstnames,'lastnames':lastnames}
+    names = {'firstnames': firstnames,'lastnames':lastnames}
 
-#     for key in names:
-#         weight_file = f"finalweights/{key}_weights.txt"
+    global START, STOP, maxlen
+    START = "^"
+    STOP = "$"
 
-#         # Set up neural network
-#         load_weights(model,weight_file)
+    for key in names:
+        # Set up neural network
+        model_file = f'tfweights/{key}.keras'
+        model = keras.models.load_model(model_file)
+        maxlen = model.layers[0].output_shape[1]
 
-#         start_time = datetime.now()
-#         print(f"Generating {key} names",start_time.strftime('%H:%M:%S'))
-#         generated_names = []
+        start_time = datetime.now()
+        print(f"Generating {key} names",start_time.strftime('%H:%M:%S'))
+        generated_names = []
 
-#         for _ in tqdm.tqdm(range(n_players)):
-#             generated_names.append(generate(model, vocab))
+        for _ in tqdm.tqdm(range(n_players)):
+            generated_names.append(generate(model, vocab))
 
-#         end_time = datetime.now()
-#         difference = end_time - start_time
-#         print(f"Total generation time = ",difference)
+        end_time = datetime.now()
+        difference = end_time - start_time
+        print(f"Total generation time = ",difference)
 
-#         count = 0
-#         for name in tqdm.tqdm(generated_names):
-#             if name in names[key]:
-#                 count += 1
+        count = 0
+        for name in tqdm.tqdm(generated_names):
+            if name in names[key]:
+                count += 1
 
-#         print(f"{count} names were already in the list ({count/n_players*100}%)")
-#         # print(generated_names)
+        print(f"{count} names were already in the list ({count/n_players*100}%)")
 

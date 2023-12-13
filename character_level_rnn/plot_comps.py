@@ -1,7 +1,7 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
-from name_network import import_names
+from scratch_name_network import import_names
 from collections import Counter
 
 def learning_rate_plot():
@@ -38,7 +38,7 @@ def batch_size_plot():
     ax.set_title(title)
     plt.show()
 
-batch_size_plot()
+# batch_size_plot()
 
 def momentum_plot():
     losses1 = pd.read_csv("weights/firstnames_0.01_1000_history.txt")
@@ -55,10 +55,6 @@ def momentum_plot():
     title = f"Scratch Network Trained on First Names\n"
     ax.set_title(title)
     plt.show()
-
-# momentum_plot()
-# learning_rate_plot()
-# batch_size_plot()
 
 def firstname_frequency():
 
@@ -114,6 +110,38 @@ def longtail_frequency():
     ax.set_xlabel("Name")
     plt.show()
 
+def firstnames_comparison_plot():
+    history1 = pd.read_csv("weights/firstnames_0.01_500_history.txt")
+    history2 = pd.read_csv("tfweights/firstnames_0.01_1000.history")
 
+    fig,ax = plt.subplots()
+    ax.plot(history1['Time'],history1["Accuracy"],color="black", label="Scratch Network")
+    ax.plot(history2['time'],history2["val_accuracy"],color="red", label="Keras Network")
+    ax.set_xlabel("Time in Seconds")
+    ax.set_ylabel("Accuracy")
+    ax.legend(loc='lower right')
+    title = f"Networks Trained on First Names\n"
+    ax.set_title(title)
+    plt.show()
+
+def lastnames_comparison_plot():
+    history1 = pd.read_csv("weights/lastnames_0.01_500_0.9_history.txt")
+    # history1 = pd.read_csv("weights/lastnames_history.txt")
+    history2 = pd.read_csv("tfweights/lastnames_0.01_1000.history")
+
+    fig,ax = plt.subplots()
+    ax.plot(history1['Time'],history1["Accuracy"],color="black", label="Scratch Network")
+    ax.plot(history2['time'],history2["val_accuracy"],color="red", label="Keras Network")
+    ax.set_xlabel("Time in Seconds")
+    ax.set_ylabel("Accuracy")
+    ax.legend(loc='lower right')
+    title = f"Networks Trained on Last Names\n"
+    ax.set_title(title)
+    plt.show()
 
 # longtail_frequency()
+# momentum_plot()
+# learning_rate_plot()
+# batch_size_plot()
+# lastnames_comparison_plot()
+firstnames_comparison_plot()

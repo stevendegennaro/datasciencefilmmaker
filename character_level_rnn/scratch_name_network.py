@@ -269,6 +269,10 @@ def training_speed_test(n_epochs,
     # These are used to plot our progess during training
     global elapsed_time
     global fig
+    global START, STOP
+    START = "^"
+    STOP = "$"
+
 
     # Load the shuffled names
     shufflefile="data/shuffled_names.json"
@@ -280,7 +284,7 @@ def training_speed_test(n_epochs,
 
     runs = ['firstnames','lastnames']
     # runs = ['firstnames']
-    # runs = ['lastnames']
+    runs = ['lastnames']
 
     for run in runs:
         n_train = int(np.floor(len(names[run]) * 0.8))
@@ -302,8 +306,8 @@ def training_speed_test(n_epochs,
         model = create_model(vocab, learning_rate = learning_rate, momentum = momentum)
         weight_file = f'weights/{run}_{learning_rate}_{batch_size}_{momentum}_weights.txt'
         history_file = f'weights/{run}_{learning_rate}_{batch_size}_{momentum}_history.txt'
-        # weight_file = f'weights/{run}_weights.txt'
-        # history_file = f'weights/{run}_history.txt'
+        weight_file = f'weights/{run}_weights.txt'
+        history_file = f'weights/{run}_history.txt'
         if cont: 
             load_weights(model,weight_file)
             history = pd.read_csv(history_file)
@@ -320,7 +324,7 @@ def training_speed_test(n_epochs,
               vocab = vocab,
               history = history,
               history_file = history_file,
-              plot_histories = True)
+              plot_histories = False)
 
         plt.ioff()
 
