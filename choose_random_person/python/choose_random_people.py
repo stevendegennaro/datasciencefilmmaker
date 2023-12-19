@@ -68,6 +68,28 @@ def plot_location(person: pd.DataFrame, ax: plt.Axes,color="black") -> None:
     ax.plot(x,y,color=color)
     ax.plot(person['location'].x,person['location'].y,marker="+",color=color)
 
+# main function to create the final file that I need, which is a list of 
+# 100 randomly-drawn locations in the U.S. weighted by population
+# output in json format so they can be plotted by the Google Maps API
+def create_cameras_json(n_samples: int = 100):
+    load_lookup()
+    cameras = get_random_people(n_samples)
+    cameras_dict_list = []
+    for index,row in cameras.iterrows():
+        try:
+            cameras_dict_list.append({'lat':row['location'].y,
+                                      'lng':row['location'].x,
+                                      'radius':np.random.normal(1200,100)})
+        except:
+            print(row)
+            sys.exit()
+    with open('../html and javascript/camera_list.json','w') as f:
+        json.dump(cameras_dict_list,f)
+
+###########################
+#### Testing Functions ####
+###########################
+
 # Test function to make sure we are drawing random blocks
 def test_blocks() -> None:
     load_lookup()
@@ -101,22 +123,12 @@ def test_shape(person,n):
     plt.ylabel("Latitude")
     plt.show()
 
-# main function to create the final file that I need, which is a list of 
-# 100 randomly-drawn locations in the U.S. weighted by population
-# output in json format so they can be plotted by the Google Maps API
-def create_cameras_json(n_samples: int = 100):
-    load_lookup()
-    cameras = get_random_people(n_samples)
-    cameras_dict_list = []
-    for index,row in cameras.iterrows():
-        try:
-            cameras_dict_list.append({'lat':row['location'].y,
-                                      'lng':row['location'].x,
-                                      'radius':np.random.normal(1200,100)})
-        except:
-            print(row)
-            sys.exit()
-    with open('../html and javascript/camera_list.json','w') as f:
-        json.dump(cameras_dict_list,f)
-
-
+# Plots a histogram of the populations of every block in the census
+def block_population_hist(blocks_df):
+    # blocks_df = pd.read_csv('data/blocks.csv',dtype={'FIPS': str})
+    plt.hist(blocks_df['population'], bins=200,color="midnightblue",edgecolor="k")
+    plt.yscale('log')
+    plt.xlabel('Population')
+    plt.ylabel('Log(N)')
+    plt.title('Distribution of Block Populations in 2020 Census')
+    plt.show()
