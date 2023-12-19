@@ -139,9 +139,39 @@ def lastnames_comparison_plot():
     ax.set_title(title)
     plt.show()
 
+def neurons_comparison_plot():
+    history1 = pd.read_csv("tfweights/firstnames_0.01_1000 copy.history")
+    history2 = pd.read_csv("tfweights/firstnames_0.01_1000.history")
+
+    fig,ax = plt.subplots()
+    ax.plot(history1['time'],history1["val_accuracy"],color="black", label="32 Hidden Units")
+    ax.plot(history2['time'],history2["val_accuracy"],color="red", label="128 Hidden Units")
+    ax.set_xlabel("Time in Seconds")
+    ax.set_ylabel("Accuracy")
+    ax.legend(loc='lower right')
+    title = f"Networks Trained on First Names\n"
+    ax.set_title(title)
+    plt.show()
+
+def lstm_comparison_plot():
+    history1 = pd.read_csv("tfweights/firstnames_0.01_1000_32.history")
+    history2 = pd.read_csv("tfweights/firstnames_0.01_1000_lstm.history")
+
+    fig,ax = plt.subplots()
+    ax.plot(history1['time'],history1["val_accuracy"],color="black", label="SimpleRNN")
+    ax.plot(history2['time'],history2["val_accuracy"],color="red", label="LSTM")
+    ax.set_xlabel("Time in Seconds")
+    ax.set_ylabel("Accuracy")
+    ax.legend(loc='lower right')
+    title = f"Networks Trained on First Names\n"
+    ax.set_title(title)
+    plt.show()
+
 # longtail_frequency()
 # momentum_plot()
 # learning_rate_plot()
 # batch_size_plot()
 # lastnames_comparison_plot()
-firstnames_comparison_plot()
+# firstnames_comparison_plot()
+# neurons_comparison_plot()
+lstm_comparison_plot()

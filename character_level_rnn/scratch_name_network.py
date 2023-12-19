@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 import csv
 import matplotlib.pyplot as plt
 import pandas as pd
+from timeit import default_timer as timer
 
 def import_names(namesfile="data/all_names.json"):
     # Define the start and end characters of every name
@@ -370,5 +371,31 @@ def generation_test(n_players):
 
     # for i in range(len(generated_first_names)):
     #     print(generated_first_names[i],generated_last_names[i],random_suffix())
+
+def generation_timing_test(n_players):
+    vocab_file = f"finalweights/vocab.txt"
+    vocab = load_vocab(vocab_file)
+
+    global START, STOP, maxlen
+    START = "^"
+    STOP = "$"
+
+    # Set up neural network
+    weight_file = f"finalweights/lastnames_weights.txt"
+    model = create_model(vocab)
+    load_weights(model,weight_file)
+
+    rows = []
+    for _ in tqdm.tqdm(range(n_players)):
+        start_time = timer()
+        name = generate(model, vocab)
+        end_time = timer()
+        difference = end_time - start_time
+        rows.append([len(name),difference])
+
+    times = pd.DataFrame(rows)
+    times.columns = ['length','time']
+
+    return times
 
 

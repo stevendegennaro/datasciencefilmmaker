@@ -4,7 +4,6 @@
 # by generating a new first name and a new last name one letter
 # at a time, then adding a random suffix from the list of suffixes
 
-import tensorflow as tf
 from tensorflow import keras
 import numpy as np
 import pandas as pd
@@ -17,7 +16,6 @@ from datetime import datetime
 import tqdm
 from scratch_name_network import import_names
 import matplotlib.pyplot as plt
-from timeit import default_timer as timer
 
 # Takes a list of weights and returns a random
 # index chosen based on the weights
@@ -59,12 +57,18 @@ class OutputHistory(keras.callbacks.Callback):
             self.hist_df.to_csv(f, index = False)
 
 def scheduler(epoch, lr):
-    if epoch < 5:
+    if epoch < 25:
         return 0.01
     elif epoch < 50:
         return 0.001
     else:
         return 0.0005
+
+def speed_scheduler(epoch, lr):
+    if epoch < 4:
+        return 0.01
+    else:
+        return 0.001
 
 # Use the trained network to generate a new name
 def generate(model, vocab):
@@ -72,13 +76,14 @@ def generate(model, vocab):
     string = START
     x = np.zeros((1, maxlen, vocab.size))
     x[0, 0, vocab.w2i[START]] = 1.0
+
     # Encode the starting character
     for t in range(1,maxlen):
-        start_time = timer()
         # Generate the next character
         probabilities = model.predict(x, verbose=0)[0]
         next_letter = vocab.i2w[sample_from(probabilities)]
         string += next_letter
+
         # If this is our STOP character, we're done
         if string[-1] == STOP:
             return string[1:-1]
@@ -173,12 +178,11 @@ def train_network(tr = [0,0],
                 print("Model file does not exist")
                 sys.exit()
         else:
-            HIDDEN_DIM = 128
+            HIDDEN_DIM = 32
             model = keras.Sequential(
                 [
                     keras.layers.Masking(mask_value=padding_value, input_shape=(maxlen, vocab.size)),
-                    keras.layers.SimpleRNN(HIDDEN_DIM,return_sequences=True),
-                    keras.layers.SimpleRNN(HIDDEN_DIM,),
+                    keras.layers.LSTM(HIDDEN_DIM,unroll=True),
                     keras.layers.Dense(vocab.size, activation="softmax"),
                 ]
             )
@@ -243,8 +247,8 @@ def training_speed_test(n_epochs = 20,
             plt.ion()
             plt.show()
 
-        model_file = f'tfweights/{run}_{learning_rate}_{batch_size}.keras'
-        history_file = f"tfweights/{run}_{learning_rate}_{batch_size}.history"
+        model_file = f'tfweights/{run}_{learning_rate}_{batch_size}_lstm.keras'
+        history_file = f"tfweights/{run}_{learning_rate}_{batch_size}_lstm.history"
 
         # Build the training set
         print(f"Building training set for {run}")
@@ -275,11 +279,11 @@ def training_speed_test(n_epochs = 20,
                 print("Model file does not exist")
                 sys.exit()
         else:
-            HIDDEN_DIM = 128
+            HIDDEN_DIM = 32
             model = keras.Sequential(
                 [
                     keras.layers.Masking(mask_value=padding_value, input_shape=(maxlen, vocab.size)),
-                    keras.layers.SimpleRNN(HIDDEN_DIM,),
+                    keras.layers.LSTM(HIDDEN_DIM,unroll=True),
                     keras.layers.Dense(vocab.size, activation="softmax"),
                 ]
             )
@@ -325,7 +329,7 @@ def generation_test(n_players):
 
     for key in names:
         # Set up neural network
-        model_file = f'tfweights/{key}_0.01_1000_128.keras'
+        model_file = f'tfweights/{key}.keras'
         model = keras.models.load_model(model_file)
         maxlen = model.layers[0].output_shape[1]
 
@@ -347,36 +351,3 @@ def generation_test(n_players):
 
         print(f"{count} names were already in the list ({count/n_players*100}%)")
 
-def generation_timing_test(n_players):
-    tf.compat.v1.disable_eager_execution()
-    vocab_file = f"finalweights/vocab.txt"
-    vocab = load_vocab(vocab_file)
-
-    global START, STOP, maxlen, generation_times
-    generation_times = []
- 
-    START = "^"
-    STOP = "$"
-
-    # Set up neural network
-    model_file = f'finalweights/lastnames_rnn.keras'
-    model = keras.models.load_model(model_file)
-    maxlen = model.layers[0].output_shape[1]
-
-    # times = pd.DataFrame({'length': pd.Series(dtype='int'),
-    #                       'time': pd.Series(dtype='float')})
-
-    rows = []
-    for _ in tqdm.tqdm(range(n_players)):
-        start_time = timer()
-        name = generate(model, vocab)
-        end_time = timer()
-        difference = end_time - start_time
-        rows.append([len(name),difference])
-
-    times = pd.DataFrame(rows)
-    times.columns = ['length','time']
-
-    generation_times = pd.DataFrame(generation_times,columns = ['t','cp1','cp2','cp3'])
-
-    return times, generation_times

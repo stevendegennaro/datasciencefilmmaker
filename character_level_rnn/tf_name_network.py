@@ -5,7 +5,6 @@
 # at a time, then adding a random suffix from the list of suffixes
 
 import tensorflow as tf
-from tensorflow import keras
 import numpy as np
 import pandas as pd
 from player import Player
@@ -17,7 +16,109 @@ from datetime import datetime
 import tqdm
 from scratch_name_network import import_names
 import matplotlib.pyplot as plt
-from timeit import default_timer as timer
+
+
+class NameModel(tf.keras.Model):
+    def __init__(self, vocab, maxlen, hidden_dim = 32):
+        super().__init__()
+        self.padding_value = np.zeros((vocab.size,))
+        self.maxlen = maxlen
+        self.vocab_size = vocab.size
+        self.hidden_dim = hidden_dim
+        self.state = tf.zeros(shape = (1,self.hidden_dim))
+        self.mask = tf.keras.layers.Masking(mask_value=self.padding_value, input_shape=(self.maxlen, self.vocab_size))
+        self.RNN =  tf.keras.layers.SimpleRNN(self.hidden_dim, return_state = True)
+        self.dense = tf.keras.layers.Dense(self.vocab_size, activation="softmax")
+
+    def call(self, inputs, states = None, return_state=False, training=False):
+        if training:
+            x = inputs
+            x = self.mask(x, training=True)
+            x, _ = self.RNN(x, training=True)
+            x = self.dense(x, training=True)
+        else:
+            x = inputs
+            x = self.mask(x, training=False)
+            x, self.state = self.RNN(x, training=False, initial_state = self.state)
+            x = self.dense(x, training=False)
+        return x
+
+    def reset_state(self):
+        self.state = tf.zeros(shape = (1,self.hidden_dim))
+
+# class MemoryRNN(tf.keras.layers.Layer):
+#     def __init__(self, hidden_dim=32, return_state = False):
+#         super().__init__()
+#         self.hidden_dim = hidden_dim
+#         self.rnn_layer = tf.keras.layers.SimpleRNN(hidden_dim, return_sequences=True, return_state=True)
+#         self.initial_state = None
+#         self.test = 500
+
+#     def call(self, inputs, reset_state = False, states = None, return_state = False, training = False):
+
+
+#         if training:
+#             x, hidden_state = self.rnn_layer(inputs)
+#             if return_state:
+#                 # This line takes advantage of the fact that the hidden_state
+#                 # of a simpleRNN layer is equal to the output with return_sequences = False
+#                 # So we swap them when we output them.
+#                 return x[:,-1,:], x
+#             else:
+#                 return x
+
+#         else:
+#             print(self.test)
+#             sys.stdout.flush()
+#             self.test += 1
+#             # tf.print(self.states)
+
+#             if reset_state or self.initial_state is None:
+#                 self.initial_state = tf.zeros((tf.shape(inputs)[0], self.hidden_dim))
+
+#             states = self.initial_state
+
+#             outputs_ta = tf.TensorArray(tf.float32, size=tf.shape(inputs)[1])
+#             for i in tf.range(tf.shape(inputs)[1]):
+#                 x, states = self.rnn_layer(inputs[:, i:i+1, :], initial_state=states)
+#                 outputs_ta = outputs_ta.write(i, x)
+
+#             self.initial_state = states
+            
+#             # tf.print(self.initial_state)
+
+#             if return_state:
+#                 return states, states
+#             else:
+#                 return x
+
+#     def reset_state(self):
+#         self.initial_state = None
+
+# class MemoryRNN(tf.keras.layers.Layer):
+#     def __init__(self, hidden_dim=32):
+#         super().__init__()
+#         self.hidden_dim = hidden_dim
+#         self.rnn_layer = tf.keras.layers.SimpleRNN(hidden_dim, return_sequences=True, return_state=True)
+
+#     def call(self, inputs, states=None, training=False):
+#         # if states is None:
+#         #     states = tf.zeros((tf.shape(inputs)[0], self.hidden_dim))
+
+#         all_states = []
+#         outputs_ta = tf.TensorArray(tf.float32, size=tf.shape(inputs)[1])
+
+#         for i in tf.range(tf.shape(inputs)[1]):
+#             x, states = self.rnn_layer(inputs[:, i:i+1, :], initial_state=states)
+#             # all_states.append(states)
+#             outputs_ta = outputs_ta.write(i, x)
+
+#         outputs = outputs_ta.stack()
+
+#         # if return_state:
+#         return outputs, all_states
+#         # else:
+#             # return outputs
 
 # Takes a list of weights and returns a random
 # index chosen based on the weights
@@ -35,7 +136,7 @@ def plot_history(hist_df, color = "black"):
     plt.draw()
     plt.pause(0.1)
 
-class OutputHistory(keras.callbacks.Callback):
+class OutputHistory(tf.keras.callbacks.Callback):
     def __init__(self, history_file):
         self.history_file = history_file
         self.hist_df = pd.DataFrame({'epoch': pd.Series(dtype='int'),
@@ -59,7 +160,7 @@ class OutputHistory(keras.callbacks.Callback):
             self.hist_df.to_csv(f, index = False)
 
 def scheduler(epoch, lr):
-    if epoch < 5:
+    if epoch < 25:
         return 0.01
     elif epoch < 50:
         return 0.001
@@ -67,26 +168,32 @@ def scheduler(epoch, lr):
         return 0.0005
 
 # Use the trained network to generate a new name
-def generate(model, vocab):
+def generate(model, vocab, verbose = False):
     # Start with our starting character
     string = START
     x = np.zeros((1, maxlen, vocab.size))
     x[0, 0, vocab.w2i[START]] = 1.0
+
+    if verbose: print(START,end="")
     # Encode the starting character
     for t in range(1,maxlen):
-        start_time = timer()
         # Generate the next character
-        probabilities = model.predict(x, verbose=0)[0]
+        probabilities = model(x)[0].numpy()
         next_letter = vocab.i2w[sample_from(probabilities)]
         string += next_letter
+        if verbose: print(next_letter,end="")
+        sys.stdout.flush()
         # If this is our STOP character, we're done
         if string[-1] == STOP:
+            if verbose: print("")
+            model.reset_state()
             return string[1:-1]
         # If not, then add this to our string and
         # go back through the loop again.
         x[0, t, vocab.w2i[string[t]]] = 1.0
     # If we get here, it means we hit our max length
     # So return the string without the start character
+    model.reset_state()
     return string[1:]
 
 def split_names():
@@ -112,6 +219,8 @@ def train_network(tr = [0,0],
     start_time = datetime.now()
     print(f"Start time = ",start_time.strftime('%H:%M:%S'))
 
+    tf.random.set_seed(0)
+    np.random.seed(0)
     # Define the start and end characters of every name
     global START, STOP, maxlen, fig
     START = "^"
@@ -168,27 +277,19 @@ def train_network(tr = [0,0],
 
         if cont:
             if os.path.isfile(model_file):
-                model = keras.models.load_model(model_file)
+                model = tf.keras.models.load_model(model_file)
             else:
                 print("Model file does not exist")
                 sys.exit()
         else:
-            HIDDEN_DIM = 128
-            model = keras.Sequential(
-                [
-                    keras.layers.Masking(mask_value=padding_value, input_shape=(maxlen, vocab.size)),
-                    keras.layers.SimpleRNN(HIDDEN_DIM,return_sequences=True),
-                    keras.layers.SimpleRNN(HIDDEN_DIM,),
-                    keras.layers.Dense(vocab.size, activation="softmax"),
-                ]
-            )
-            optimizer = keras.optimizers.RMSprop(learning_rate=learning_rate)
+            model = NameModel(vocab,maxlen)
+            optimizer = tf.keras.optimizers.RMSprop(learning_rate=learning_rate)
             model.compile(loss="categorical_crossentropy", optimizer=optimizer, metrics=['accuracy'])
 
         if tr[r]:
             output_callback = OutputHistory(history_file)
-            schedule_callback = keras.callbacks.LearningRateScheduler(scheduler)
-            checkpoint_callback = keras.callbacks.ModelCheckpoint(filepath=model_file,
+            schedule_callback = tf.keras.callbacks.LearningRateScheduler(scheduler)
+            checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(filepath=model_file,
                                                                  monitor='accuracy',
                                                                  mode='max',
                                                                  save_best_only=True)
@@ -196,12 +297,13 @@ def train_network(tr = [0,0],
                                 y, 
                                 epochs=tr[r], 
                                 batch_size = batch_size, 
-                                callbacks = [output_callback,schedule_callback,checkpoint_callback])
+                                callbacks = [output_callback,schedule_callback])
+            model.save_weights(model_file)
 
         if gn:
             print(f"Generating {run}")
             for _ in range(gn):
-                generated_names[run].append(generate(model,vocab))
+                generated_names[run].append(generate(model,vocab,True))
 
 
     def random_suffix() -> str:
@@ -270,20 +372,21 @@ def training_speed_test(n_epochs = 20,
 
         if cont:
             if os.path.isfile(model_file):
-                model = keras.models.load_model(model_file)
+                model = tf.keras.models.load_model(model_file)
             else:
                 print("Model file does not exist")
                 sys.exit()
         else:
-            HIDDEN_DIM = 128
-            model = keras.Sequential(
+            HIDDEN_DIM = 32
+            model = tf.keras.Sequential(
                 [
-                    keras.layers.Masking(mask_value=padding_value, input_shape=(maxlen, vocab.size)),
-                    keras.layers.SimpleRNN(HIDDEN_DIM,),
-                    keras.layers.Dense(vocab.size, activation="softmax"),
+                    tf.keras.layers.Masking(mask_value=padding_value, input_shape=(maxlen, vocab.size)),
+                    tf.keras.layers.SimpleRNN(HIDDEN_DIM,return_sequences=True),
+                    tf.keras.layers.SimpleRNN(HIDDEN_DIM,),
+                    tf.keras.layers.Dense(vocab.size, activation="softmax"),
                 ]
             )
-            optimizer = keras.optimizers.RMSprop(learning_rate=learning_rate)
+            optimizer = tf.keras.optimizers.RMSprop(learning_rate=learning_rate)
             model.compile(loss="categorical_crossentropy", 
                           optimizer=optimizer, 
                           metrics=['accuracy'])
@@ -291,8 +394,8 @@ def training_speed_test(n_epochs = 20,
         start_time = datetime.now()
         print(f"Start time = ",start_time.strftime('%H:%M:%S'))
 
-        output_callback = OutputHistory(history_file)
-        schedule_callback = keras.callbacks.LearningRateScheduler(scheduler)
+        output_callback = OutputHistory(history_file, model_file)
+        schedule_callback = tf.keras.callbacks.LearningRateScheduler(scheduler)
         history = model.fit(x, 
                             y, 
                             epochs=n_epochs, 
@@ -325,8 +428,8 @@ def generation_test(n_players):
 
     for key in names:
         # Set up neural network
-        model_file = f'tfweights/{key}_0.01_1000_128.keras'
-        model = keras.models.load_model(model_file)
+        model_file = f'tfweights/{key}.keras'
+        model = tf.keras.models.load_model(model_file)
         maxlen = model.layers[0].output_shape[1]
 
         start_time = datetime.now()
@@ -347,36 +450,3 @@ def generation_test(n_players):
 
         print(f"{count} names were already in the list ({count/n_players*100}%)")
 
-def generation_timing_test(n_players):
-    tf.compat.v1.disable_eager_execution()
-    vocab_file = f"finalweights/vocab.txt"
-    vocab = load_vocab(vocab_file)
-
-    global START, STOP, maxlen, generation_times
-    generation_times = []
- 
-    START = "^"
-    STOP = "$"
-
-    # Set up neural network
-    model_file = f'finalweights/lastnames_rnn.keras'
-    model = keras.models.load_model(model_file)
-    maxlen = model.layers[0].output_shape[1]
-
-    # times = pd.DataFrame({'length': pd.Series(dtype='int'),
-    #                       'time': pd.Series(dtype='float')})
-
-    rows = []
-    for _ in tqdm.tqdm(range(n_players)):
-        start_time = timer()
-        name = generate(model, vocab)
-        end_time = timer()
-        difference = end_time - start_time
-        rows.append([len(name),difference])
-
-    times = pd.DataFrame(rows)
-    times.columns = ['length','time']
-
-    generation_times = pd.DataFrame(generation_times,columns = ['t','cp1','cp2','cp3'])
-
-    return times, generation_times
