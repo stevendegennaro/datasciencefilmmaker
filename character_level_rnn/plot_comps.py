@@ -5,14 +5,14 @@ from scratch_name_network import import_names
 from collections import Counter
 
 def learning_rate_plot():
-    losses1 = pd.read_csv("weights/firstnames_0.01_500_history.txt")
-    losses2 = pd.read_csv("weights/firstnames_0.05_500_history.txt")
-    losses3 = pd.read_csv("weights/firstnames_0.005_500_history.txt")
+    history1 = pd.read_csv("weights/firstnames_0.01_500_history.txt")
+    history2 = pd.read_csv("weights/firstnames_0.05_500_history.txt")
+    history3 = pd.read_csv("weights/firstnames_0.005_500_history.txt")
 
     fig,ax = plt.subplots()
-    ax.plot(losses1['Time'],losses1["Accuracy"],color="red", label="Learning Rate = 0.01")
-    ax.plot(losses2['Time'],losses2["Accuracy"],color="black", label="Learning Rate = 0.05")
-    ax.plot(losses3['Time'],losses3["Accuracy"],color="blue",label="Learning Rate = 0.005")
+    ax.plot(history1['Time'],history1["Accuracy"],color="red", label="Learning Rate = 0.01")
+    ax.plot(history2['Time'],history2["Accuracy"],color="black", label="Learning Rate = 0.05")
+    ax.plot(history3['Time'],history3["Accuracy"],color="blue",label="Learning Rate = 0.005")
     ax.set_xlabel("Time in Seconds")
     ax.set_ylabel("Accuracy")
     handles, labels = plt.gca().get_legend_handles_labels()
@@ -23,14 +23,14 @@ def learning_rate_plot():
     plt.show()
 
 def batch_size_plot():
-    losses1 = pd.read_csv("weights/firstnames_0.01_500_history.txt")
-    losses2 = pd.read_csv("weights/firstnames_0.01_1000_history.txt")
-    losses3 = pd.read_csv("weights/firstnames_0.01_18187_history.txt")
+    history1 = pd.read_csv("weights/firstnames_0.01_500_history.txt")
+    history2 = pd.read_csv("weights/firstnames_0.01_1000_history.txt")
+    history3 = pd.read_csv("weights/firstnames_0.01_18187_history.txt")
 
     fig,ax = plt.subplots()
-    ax.plot(losses1['Time'],losses1["Accuracy"],color="red", label="Batch Size = 500")
-    ax.plot(losses2['Time'],losses2["Accuracy"],color="black", label="Batch Size = 1,000")
-    ax.plot(losses3['Time'],losses3["Accuracy"],color="blue",label="Batch Size = 18,187")
+    ax.plot(history1['Time'],history1["Accuracy"],color="red", label="Batch Size = 500")
+    ax.plot(history2['Time'],history2["Accuracy"],color="black", label="Batch Size = 1,000")
+    ax.plot(history3['Time'],history3["Accuracy"],color="blue",label="Batch Size = 18,187")
     ax.set_xlabel("Time in Seconds")
     ax.set_ylabel("Accuracy")
     ax.legend(loc='lower right')
@@ -38,17 +38,47 @@ def batch_size_plot():
     ax.set_title(title)
     plt.show()
 
-# batch_size_plot()
+def tf_batch_size_plot():
+    history1 = pd.read_csv("tfweights/firstnames_0.001_1000.history")
+    history2 = pd.read_csv("tfweights/firstnames_0.001_32.history")
+    history3 = pd.read_csv("tfweights/firstnames_0.001_1001.history")
+
+    fig,ax = plt.subplots()
+    ax.plot(history2['time'],history2["val_accuracy"],color="black", label="Batch Size = None (32)")
+    ax.plot(history1['time'],history1["val_accuracy"],color="red", label="Batch Size = 1000")
+    ax.plot(history3['time'],history3["val_accuracy"],color="blue", label="Batch Size = 10000")
+    ax.set_xlabel("Time in Seconds")
+    ax.set_ylabel("Accuracy")
+    ax.legend(loc='lower right')
+    title = f"Keras Network Trained on First Names\n"
+    ax.set_title(title)
+    plt.show()
+
+def tf_learning_rate_plot():
+    history1 = pd.read_csv("tfweights/lastnames_0.001_1000.history")
+    history2 = pd.read_csv("tfweights/lastnames_0.01_1000.history")
+    # history3 = pd.read_csv("tfweights/firstnames_0.001_1001.history")
+
+    fig,ax = plt.subplots()
+    ax.plot(history2['time'],history2["val_accuracy"],color="black", label="Learning Rate = 0.001")
+    ax.plot(history1['time'],history1["val_accuracy"],color="red", label="Learning Rate = 0.01")
+    # ax.plot(history3['time'],history3["val_accuracy"],color="blue", label="Batch Size = 10000")
+    ax.set_xlabel("Time in Seconds")
+    ax.set_ylabel("Accuracy")
+    ax.legend(loc='lower right')
+    title = f"Keras Network Trained on First Names\n"
+    ax.set_title(title)
+    plt.show()
 
 def momentum_plot():
-    losses1 = pd.read_csv("weights/firstnames_0.01_1000_history.txt")
-    losses2 = pd.read_csv("weights/firstnames_0.01_1000_0.5_history.txt")
-    losses3 = pd.read_csv("weights/firstnames_0.01_1000_0.1_history.txt")
+    history1 = pd.read_csv("weights/firstnames_0.01_1000_history.txt")
+    history2 = pd.read_csv("weights/firstnames_0.01_1000_0.5_history.txt")
+    history3 = pd.read_csv("weights/firstnames_0.01_1000_0.1_history.txt")
  
     fig,ax = plt.subplots()
-    ax.plot(losses1['Time'],losses1["Accuracy"],color="red", label="Momentum = 0.9")
-    ax.plot(losses2['Time'],losses2["Accuracy"],color="black", label="Momentum = 0.5")
-    ax.plot(losses3['Time'],losses3["Accuracy"],color="blue",label="Momentum = 0.1")
+    ax.plot(history1['Time'],history1["Accuracy"],color="red", label="Momentum = 0.9")
+    ax.plot(history2['Time'],history2["Accuracy"],color="black", label="Momentum = 0.5")
+    ax.plot(history3['Time'],history3["Accuracy"],color="blue",label="Momentum = 0.1")
     ax.set_xlabel("Time in Seconds")
     ax.set_ylabel("Accuracy")
     ax.legend(loc='lower right')

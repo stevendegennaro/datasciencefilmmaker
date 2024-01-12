@@ -1,5 +1,5 @@
 import json
-from typing import List
+from typing import List, Tuple, Dict
 from dsfs_vocab import Vocabulary,save_vocab, load_vocab
 from dsfs_deep import (SimpleRnn,Linear,Momentum,Model,SoftMaxCrossEntropy,
                         softmax,sample_from,save_weights,load_weights)
@@ -11,27 +11,33 @@ import csv
 import matplotlib.pyplot as plt
 import pandas as pd
 from timeit import default_timer as timer
+from collections import Counter
 
-def import_names(namesfile="data/all_names.json"):
+
+# Import the names from the file,
+# add the START and STOP characters,
+# and put into separate lists for first and last names and suffixes
+# Output to a tuple
+def import_names(namesfile: str = "data/all_names.json") -> Tuple:
     # Define the start and end characters of every name
     global START, STOP
     START = "^"
     STOP = "$"
 
-    # Import the names from the file and put into lists
     with open(namesfile,"r") as f:
         entries = json.load(f)
     players = [Player(entry) for entry in entries]
-    firstnames = [(START + player.firstname + STOP) for player in players if player.firstname is not None]
+    firstnames = [(START + player.firstname + STOP) \
+                    for player in players if player.firstname is not None]
     lastnames = [(START + player.lastname + STOP) for player in players]
     suffixes = [player.suffix for player in players]
 
     return firstnames, lastnames, suffixes
 
-def calculate_accuracy(model, test_names, vocab):
+def calculate_accuracy(model: Model, test_names: List, vocab: Vocabulary) -> float:
     n_correct = 0
     count = 0
-    for name in test_names[:100]:
+    for name in test_names:
         model.layers[0].reset_hidden_state()
         model.layers[1].reset_hidden_state()
         for letter,next_letter in zip(name,name[1:]):
@@ -46,13 +52,13 @@ def calculate_accuracy(model, test_names, vocab):
     accuracy = n_correct / count
     return accuracy
 
-def plot_history(history, color = "black"):
+def plot_history(history: pd.DataFrame, color:str = "black") -> None:
     ax = fig.gca()
     ax.plot(history['Time'],history["Accuracy"], color=color)
     plt.draw()
     plt.pause(0.1)
 
-#### Training loop, called by other functions
+#### Main training loop, called by other functions
 def train(model: Model, 
           train_names: pd.DataFrame,
           test_names: pd.DataFrame, 
@@ -63,7 +69,7 @@ def train(model: Model,
           history_file: str,
           weight_file: str,
           plot_histories: bool = False
-         ):
+         ) -> None:
 
     start_time = datetime.now()
     print(f"Training start time = ",start_time.strftime('%H:%M:%S'))
@@ -85,10 +91,11 @@ def train(model: Model,
                 model.optimizer.step(model)
 
         # Calculate the accuracy using the testing data if it exists,
-        # Otherwise, calculate the accuracy using the trianing data
-        accuracy = calculate_accuracy(model, test_names, vocab) \
-                    if test_names \
-                    else calculate_accuracy(model, train_names, vocab)
+        # Otherwise, calculate the accuracy using a subset of the trianing data
+        if test_names:
+            accuracy = calculate_accuracy(model, test_names, vocab)
+        else:
+            accuracy = calculate_accuracy(model, train_names[:1000], vocab)
 
         # Output various parameters to the screen
         batch_time = datetime.now() - start_time
@@ -104,6 +111,7 @@ def train(model: Model,
                 history.to_csv(f, index = False)
         if plot_histories:
             plot_history(history)
+        # Save the model at every epoch
         save_weights(model,weight_file)
 
     end_time = datetime.now()
@@ -126,12 +134,15 @@ def generate(model: Model,
 
     return ''.join(output[1:-1])
 
-def get_vocab(names):
+def get_vocab(names: List) -> Vocabulary:
     # create a Vocabulary object from a list of names
     vocab = Vocabulary([c for name in names for c in name])
     return vocab
 
-def create_model(vocab, HIDDEN_DIM = 32, learning_rate = 0.01, momentum = 0.9):
+def create_model(vocab: Vocabulary,
+                 HIDDEN_DIM: int = 32, 
+                 learning_rate: float = 0.01, 
+                 momentum: float = 0.9) -> Model:
     # Set up neural network
     HIDDEN_DIM = 32
     rnn1 = SimpleRnn(input_dim=vocab.size,hidden_dim=HIDDEN_DIM)
@@ -144,18 +155,19 @@ def create_model(vocab, HIDDEN_DIM = 32, learning_rate = 0.01, momentum = 0.9):
 
 #### Main method to train a network from scratch 
 #### or continue from a previous training session
-def train_network(which_names = 'lastnames', 
-                  tr = True, 
-                  cont = False, 
-                  gen = True,
-                  seed = None,
-                  batch_size = None,
-                  n_epochs = 10,
-                  plot = True):
-
     # tr =  train the network
     # cont = continue training from previous weights
     # gen = generate names when done training
+    # batch_size = subset of entire data to train on per epoch
+    # plot = plot the loss and accuracy after each epoch at runtime
+def train_network(which_names: str = 'lastnames', 
+                  tr: bool = True, 
+                  cont: bool = False, 
+                  gen: bool = True,
+                  seed: bool = None,
+                  batch_size: int = None,
+                  n_epochs: int = 10,
+                  plot: bool = True) -> None:
 
     # These are used to plot our progess during training
     global elapsed_time
@@ -232,7 +244,7 @@ def train_network(which_names = 'lastnames',
 
 #### Generate a batch of first and last names 
 #### based on final weights from the training sessions
-def generate_players(n_players, file = None):
+def generate_players(n_players: int) -> List:
     
     vocab_file = f"finalweights/vocab.txt"
     vocab = load_vocab(vocab_file)
@@ -258,14 +270,17 @@ def generate_players(n_players, file = None):
         suffix = np.random.choice(suffixes)
         return suffix if suffix is not None else ""
 
+    generated_names = []
     for i in range(len(generated_first_names)):
-        print(generated_first_names[i],generated_last_names[i],random_suffix())
+        generated_names.append(generated_first_names[i],generated_last_names[i],random_suffix())
 
-def training_speed_test(n_epochs, 
-                        learning_rate = 0.01, 
-                        batch_size = None, 
-                        cont = False,
-                        momentum = 0.9):
+    return generated_names
+
+def training_speed_test(n_epochs: int, 
+                        learning_rate: float = 0.01, 
+                        batch_size: int = None, 
+                        cont: bool = False,
+                        momentum: float = 0.9) -> None:
 
     # These are used to plot our progess during training
     global elapsed_time
@@ -273,7 +288,6 @@ def training_speed_test(n_epochs,
     global START, STOP
     START = "^"
     STOP = "$"
-
 
     # Load the shuffled names
     shufflefile="data/shuffled_names.json"
@@ -329,7 +343,7 @@ def training_speed_test(n_epochs,
 
         plt.ioff()
 
-def generation_test(n_players):
+def generation_test(n_players: int) -> List:
     vocab_file = f"finalweights/vocab.txt"
     vocab = load_vocab(vocab_file)
     model = create_model(vocab)
@@ -342,6 +356,7 @@ def generation_test(n_players):
     lasstnames = set([name[1:-1] for name in lastnames])
 
     names = {'firstnames': firstnames,'lastnames':lastnames}
+    duplicates = {}
 
     for key in names:
         weight_file = f"finalweights/{key}_weights.txt"
@@ -360,19 +375,19 @@ def generation_test(n_players):
         difference = end_time - start_time
         print(f"Total generation time = ",difference)
 
+        duplicates[key] = []
         count = 0
         for name in tqdm.tqdm(generated_names):
             if name in names[key]:
                 count += 1
+                duplicates[key].append(name)
 
         print(f"{count} names were already in the list ({count/n_players*100}%)")
-        # print(generated_names)
-        # print(names[key])
 
-    # for i in range(len(generated_first_names)):
-    #     print(generated_first_names[i],generated_last_names[i],random_suffix())
+    return duplicates
 
-def generation_timing_test(n_players):
+### Tests how long it takes to generate n_players names
+def generation_timing_test(n_players: int) -> None:
     vocab_file = f"finalweights/vocab.txt"
     vocab = load_vocab(vocab_file)
 
@@ -397,5 +412,44 @@ def generation_timing_test(n_players):
     times.columns = ['length','time']
 
     return times
+
+#### Tests the frequency of generated first names vs the frequency
+#### in the original data set, plotted by length of the name
+    # duplicates = dictionary of generated names 
+    # with keys 'firstnames' and 'lastnames', which are
+    # generated by generation_test()
+def generated_frequency_test(duplicates: Dict):
+
+    df = pd.DataFrame.from_dict(Counter(duplicates['firstnames']),orient = 'index').reset_index()
+    df.columns = ['Name','Generated Count']
+    df.sort_values(by = 'Generated Count', ascending = False,inplace = True)
+    firstnames, _, _ = import_names()
+    firstnames = [name[1:-1] for name in firstnames]
+    firstnames_df = pd.DataFrame.from_dict(Counter(firstnames),orient = 'index').reset_index()
+    firstnames_df.columns = ['Name','Count']
+    firstnames_df.sort_values(by = 'Count', ascending = False,inplace = True)
+    merged_df = pd.merge(firstnames_df,df)
+    merged_df['Length'] = merged_df['Name'].str.len()
+    fig = plt.figure(figsize=(5,7))
+    nrows = 4
+    ncols = 2
+    axes = [fig.add_subplot(nrows, ncols, r * ncols + c + 1) for r in range(0, nrows) for c in range(0, ncols)]
+
+    for i,ax in enumerate(axes):
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.scatter(merged_df[merged_df['Length'] == i + 2]['Count'],
+                   merged_df[merged_df['Length'] == i + 2]['Generated Count'],
+                   marker = '.',
+                   c = 'black', label = f"{i+2}")
+        leg = ax.legend(loc = 'lower right',handlelength=0, handletextpad=0, fancybox=True)
+        for item in leg.legendHandles:
+            item.set_visible(False)
+
+    plt.subplots_adjust(wspace=0, hspace=0,left=0.1, right=0.9, top=0.9, bottom=0.05)
+    fig.supxlabel("Frequency of Name in Original List")
+    fig.supylabel("Frequency of Name in Generated List")
+    fig.suptitle("Frequency Comparison of First Names\nin Generated List vs Original")
+    plt.show()
 
 
