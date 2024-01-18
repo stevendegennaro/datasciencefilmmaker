@@ -34,26 +34,38 @@ def import_names(namesfile: str = "data/all_names.json") -> Tuple:
 
     return firstnames, lastnames, suffixes
 
-def calculate_accuracy(model: Model, test_names: List, vocab: Vocabulary) -> float:
+def calculate_accuracy(model: Model, 
+                       test_names: List, 
+                       vocab: Vocabulary,
+                       method: str = 'sample_from') -> float:
     n_correct = 0
     count = 0
-    for name in test_names:
-        model.layers[0].reset_hidden_state()
-        model.layers[1].reset_hidden_state()
-        for letter,next_letter in zip(name,name[1:]):
-            inputs = vocab.one_hot_encode(letter)
-            targets = vocab.one_hot_encode(next_letter)
-            predicted = model.forward(inputs)
-            probabilities = softmax(predicted)
-            next_char_predicted = vocab.i2w[sample_from(probabilities)]
-            if next_char_predicted == next_letter: 
-                n_correct += 1
-            count += 1
+    with tqdm.tqdm(test_names) as t:
+        for name in t:
+            model.layers[0].reset_hidden_state()
+            model.layers[1].reset_hidden_state()
+            for letter,next_letter in zip(name,name[1:]):
+                inputs = vocab.one_hot_encode(letter)
+                targets = vocab.one_hot_encode(next_letter)
+                predicted = model.forward(inputs)
+                probabilities = softmax(predicted)
+                if method == 'sample_from':
+                    next_char_predicted = vocab.i2w[sample_from(probabilities)]
+                elif method == 'argmax':
+                    next_char_predicted = vocab.i2w[np.argmax(probabilities)]
+                else:
+                    print(f"Method '{method}' not valid. Exiting...")
+                    sys.exit()
+                if next_char_predicted == next_letter: 
+                    n_correct += 1
+                count += 1
+            t.set_description(f"{n_correct/count}")
     accuracy = n_correct / count
     return accuracy
 
 def plot_history(history: pd.DataFrame, color:str = "black") -> None:
     ax = fig.gca()
+    ax.cla()
     ax.plot(history['Time'],history["Accuracy"], color=color)
     plt.draw()
     plt.pause(0.1)
@@ -160,8 +172,9 @@ def create_model(vocab: Vocabulary,
     # gen = generate names when done training
     # batch_size = subset of entire data to train on per epoch
     # plot = plot the loss and accuracy after each epoch at runtime
-def train_network(which_names: str = 'lastnames', 
+def run_network(which_names: str = 'lastnames', 
                   tr: bool = True, 
+                  learning_rate = 0.01,
                   cont: bool = False, 
                   gen: bool = True,
                   seed: bool = None,
@@ -203,6 +216,8 @@ def train_network(which_names: str = 'lastnames',
         model = create_model(vocab)
         history = pd.DataFrame(columns = ["Epoch", "Time","Epoch Loss","Accuracy","Sample Name"])
         elapsed_time = timedelta(0)
+
+    model.optimizer.lr = learning_rate
 
     # If the user hasn't specified a batch size,
     # train on all of the names for each epoch
@@ -451,5 +466,138 @@ def generated_frequency_test(duplicates: Dict):
     fig.supylabel("Frequency of Name in Generated List")
     fig.suptitle("Frequency Comparison of First Names\nin Generated List vs Original")
     plt.show()
+
+### Takes a list of letters that may or may not contain duplicates
+### Returns the maximum accuracy one could acheive by
+### choosing a letter at random according to its frequency in the list
+### and then "predicting" that letter, also according to the
+### frequency in the list. The accuracy for a given letter is the 
+### square of the probability of choosing that letter divided by
+### the square of the total number of items in the list (including dupes)
+def predict_accuracy(letters_list):
+    count = Counter(letters_list)
+    probs = np.array(list(count.values()))
+    sum_of_squares = np.sum(probs**2)
+    square_of_sum = np.sum(probs)**2
+    return sum_of_squares / square_of_sum
+
+def predict_most_likely(letters_list):
+    # What if instead of drawing from the list of letter with 
+    # frequency given by the list, we instead always draw
+    # the most frequent letter in the list (or if there is a
+    # tie, we choose at random from among the ties)
+    count = dict(Counter(letters_list))
+    most_likely = np.random.choice([key for key, value in count.items() if value == max(count.values())])
+    prob = count[most_likely]/sum(count.values())
+    return prob
+
+### Calculate the theoretical maximum accuracy of the network, 
+### given the list of names, choosing a letter at random from
+### among the possible choices for that input, with frequency
+### given by their frequency in the list
+def calculate_max_accuracy() -> float:
+
+    # Import the names and stick them in a dictionary
+    firstnames, lastnames, suffixes = import_names()
+    names = {'firstnames': firstnames, 'lastnames': lastnames}
+    
+    for run in names.keys():
+        print(run.title())
+        print("Building inputs and targets...")
+        inputs = []
+        targets = []
+        for name in names[run]:
+            for i in range(1,len(name)):
+                inputs.append(name[:i])
+                targets.append(name[i])
+        
+        print("Calculating input freqencies...")
+        input_frequency = Counter(inputs)
+        for k in input_frequency.keys():
+            input_frequency[k] /= len(inputs)
+
+        print("Building set_dict...")
+        set_dict = {k: [] for k in input_frequency.keys()}
+        for k in tqdm.tqdm(set_dict.keys()):
+            for i,item in enumerate(inputs):
+                if item == k:
+                    set_dict[k].append(targets[i])
+
+        print("Calculating accuracy...")
+        accuracy = 0.0
+        for k in tqdm.tqdm(set_dict.keys()):
+            accuracy += input_frequency[k] * predict_accuracy(set_dict[k])
+            
+        print(accuracy)
+
+### Calculate the theoretical maximum accuracy of the network, 
+### given the list of names, always choosing the most likely
+### letter given that input
+def calculate_max_likelihood() -> float:
+
+    # Import the names and stick them in a dictionary
+    firstnames, lastnames, suffixes = import_names()
+    names = {'firstnames': firstnames, 'lastnames': lastnames}
+    
+    for run in names.keys():
+        print(run.title())
+        print("Building inputs and targets...")
+        inputs = []
+        targets = []
+        for name in names[run]:
+            for i in range(1,len(name)):
+                inputs.append(name[:i])
+                targets.append(name[i])
+        
+        print("Calculating input freqencies...")
+        input_frequency = Counter(inputs)
+        for k in input_frequency.keys():
+            input_frequency[k] /= len(inputs)
+
+        print("Building set_dict...")
+        set_dict = {k: [] for k in input_frequency.keys()}
+        for k in tqdm.tqdm(set_dict.keys()):
+            for i,item in enumerate(inputs):
+                if item == k:
+                    set_dict[k].append(targets[i])
+
+        print("Calculating accuracy...")
+        accuracy = 0.0
+        for k in tqdm.tqdm(set_dict.keys()):
+            accuracy += input_frequency[k] * predict_most_likely(set_dict[k])
+            
+        print(accuracy)
+
+def manual_accuracy_test(which:str = 'first', method:str = 'argmax') -> None:
+
+    global START, STOP, maxlen
+    START = "^"
+    STOP = "$"
+
+    print(f"Calculating accuracy for {which}names...")
+
+    # Load in the names of the players and
+    # set the filenames to be used to read
+    # vocab info and network weights
+    firstnames, lastnames, suffixes = import_names()
+    if which == 'last':
+        names = lastnames
+    elif which == 'first':
+        names = firstnames
+    else:
+        assert False, 'Must choose firstnames or lastnames'
+    weight_file = f"finalweights/{which}names_weights.txt"
+
+    vocab_file = f"finalweights/vocab.txt"
+    vocab = load_vocab(vocab_file)
+
+    # Create model
+    print(f"Loading weights from {weight_file}...")
+    model = create_model(vocab)
+    load_weights(model,weight_file)
+
+    accuracy = calculate_accuracy(model, names, vocab, method)
+
+    print(f"Total accuracy is {accuracy*100:.2f}% for {which}names using method '{method}'")
 
 

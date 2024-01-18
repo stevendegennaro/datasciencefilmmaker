@@ -6,6 +6,7 @@
 
 import tensorflow as tf
 from tensorflow import keras
+from tf_lite_model import LiteModel
 import numpy as np
 import pandas as pd
 from player import Player
@@ -115,9 +116,9 @@ def shuffle_names() -> list[str]:
     # tr = list of how many epochs to train [firstnames,lastnames]
     # gn = number of names to generate when finished ('None' if you don't want)
     # batch_size = keras batch_size, i.e. the number of names to run through
-        # the network before updating. Each epoch still uses all names
+    # the network before updating. Each epoch still uses all names
     # cont = continue from the last run?
-def train_network(tr: list[int,int] = [0,0], 
+def run_network(tr: list[int,int] = [0,0], 
                   gn: int = 20,
                   learning_rate: float = 0.01, 
                   batch_size: int = None, 
@@ -206,7 +207,7 @@ def train_network(tr: list[int,int] = [0,0],
             output_callback = OutputHistory(history_file)
             schedule_callback = keras.callbacks.LearningRateScheduler(scheduler)
             checkpoint_callback = keras.callbacks.ModelCheckpoint(filepath=model_file,
-                                                                 monitor='accuracy',
+                                                                 monitor='categorical_accuracy',
                                                                  mode='max',
                                                                  save_best_only=True)
             history = model.fit(x, 
@@ -332,7 +333,7 @@ def generation_test(n_players: int) -> dict:
     # vocab info and network weights
     firstnames, lastnames, _ = import_names()
     firstnames = set([name[1:-1] for name in firstnames])
-    lasstnames = set([name[1:-1] for name in lastnames])
+    lastnames = set([name[1:-1] for name in lastnames])
 
     names = {'firstnames': firstnames,'lastnames':lastnames}
     duplicates = {}
@@ -402,3 +403,76 @@ def generation_timing_test(n_players: int) -> tuple[list[float],list[float]]:
     generation_times = pd.DataFrame(generation_times,columns = ['t','cp1','cp2','cp3'])
 
     return times, generation_times
+
+def manual_accuracy_test(which = 'first', method = 'argmax'):
+    vocab_file = f"finalweights/vocab.txt"
+    vocab = load_vocab(vocab_file)
+
+    global START, STOP, maxlen
+    START = "^"
+    STOP = "$"
+
+    #Import the names from the file
+    namesfile="data/all_names.json"
+    with open(namesfile,"r") as f:
+        entries = json.load(f)
+    players = [Player(entry) for entry in entries]
+    if which == 'first':
+        names = [(START + player.firstname + STOP) \
+                    for player in players if player.firstname is not None]
+        model_file = f'finalweights/firstnames_rnn.keras'
+    elif which == 'last':
+        names = [(START + player.lastname + STOP) \
+            for player in players if player.lastname is not None]
+        model_file = f'finalweights/lastnames_rnn.keras'
+    else:
+        print("Invalid data set")
+        sys.exit()
+        
+    # Set up the model
+    model = keras.models.load_model(model_file)
+    maxlen = model.layers[0].output_shape[1]
+    padding_value = np.zeros((vocab.size,))
+    converter = tf.lite.TFLiteConverter.from_keras_model(model)
+    converter.target_spec.supported_ops = [
+        tf.lite.OpsSet.TFLITE_BUILTINS, 
+        tf.lite.OpsSet.SELECT_TF_OPS]
+    converter._experimental_lower_tensor_list_ops = False
+    tflite_model = converter.convert()
+    lmodel = LiteModel(tf.lite.Interpreter(model_content=tflite_model))
+
+    # Build the training set
+    print(f"Building training set")
+    inputs = []
+    targets = []
+    for name in names:
+        for i in range(1,len(name)):
+            inputs.append(name[:i])
+            targets.append(name[i])
+
+    # One-hot encode inputs and targets and put into np array
+    print("One-hot encoding inputs and targets")
+    x = np.zeros((len(inputs), maxlen, vocab.size), dtype=np.float32)
+    y = np.zeros((len(inputs), vocab.size), dtype=np.float32)
+    for i, string in enumerate(inputs):
+        for t, char in enumerate(string):
+            x[i, t, vocab.w2i[char]] = 1
+        y[i, vocab.w2i[targets[i]]] = 1
+
+    count = 0
+    with tqdm.trange(len(x)) as t:
+        for i in t:
+            probabilities = lmodel.predict(x[[i]])[0]
+            if method == 'argmax':
+                next_letter = vocab.i2w[np.argmax(probabilities)]
+            elif method == 'sample_from':
+                next_letter = vocab.i2w[sample_from(probabilities)]
+            else:
+                print("Invalid method...")
+                sys.exit()
+            if next_letter == targets[i]:
+                count += 1
+            if i > 0:
+                t.set_description(f"{i} {count/i}")
+
+
