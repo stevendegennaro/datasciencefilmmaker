@@ -25,7 +25,7 @@ genres = ['horror','thriller']
 n_pages = [509,392]             # This was true when I ran the code. Found manually.
 
 ### Function to scrape Letterboxd lists by genre and put into a csv
-### This function uses Selenium to get teh eweb page data because
+### This function uses Selenium to get the web page data because
 ### the pages that we are scraping are created synamically at
 ### run time via javascript, so we have to wait for them to load
 ### completely before scraping
