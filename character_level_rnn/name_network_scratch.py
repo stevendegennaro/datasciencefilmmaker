@@ -86,6 +86,7 @@ def train(model: Model,
     start_time = datetime.now()
     print(f"Training start time = ",start_time.strftime('%H:%M:%S'))
 
+    max_accuracy = 0.0
     for epoch in range(n_epochs):
         epoch_loss = 0
         np.random.shuffle(train_names)
@@ -123,8 +124,10 @@ def train(model: Model,
                 history.to_csv(f, index = False)
         if plot_histories:
             plot_history(history)
-        # Save the model at every epoch
-        save_weights(model,weight_file)
+        # Save the model only if the accuracy is higher
+        if accuracy >= max_accuracy:
+            max_accuracy = accuracy
+            save_weights(model,weight_file)
 
     end_time = datetime.now()
     difference = end_time - start_time
