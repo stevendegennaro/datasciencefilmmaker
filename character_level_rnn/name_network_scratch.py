@@ -108,11 +108,11 @@ def train(model: Model,
         if test_names:
             accuracy = calculate_accuracy(model, test_names, vocab)
         else:
-            accuracy = calculate_accuracy(model, train_names[:1000], vocab)
+            accuracy = calculate_accuracy(model, train_names, vocab)
 
         # Output various parameters to the screen
         batch_time = datetime.now() - start_time
-        print(f"Epoch: {epoch}  Epoch Loss: {epoch_loss}  Accuracy: {accuracy}  Elapsed Time: {batch_time}")
+        print(f"Epoch: {epoch}  Epoch Loss: {epoch_loss}  Accuracy: {accuracy*100:.2f}  Elapsed Time: {batch_time}")
         sample_name = generate(model, vocab)
         print("Sample name: ",sample_name)
         total_time = (batch_time + elapsed_time).total_seconds()
@@ -257,7 +257,7 @@ def run_network(which_names: str = 'lastnames',
             generated_names.append(generate(model,vocab))
         print(generated_names)
 
-        with open('generated_test.txt',"a") as f:
+        with open('weights/generated_test.txt',"a") as f:
             json.dump(generated_names,f)
 
 #### Generate a batch of first and last names 
@@ -361,7 +361,7 @@ def training_speed_test(n_epochs: int,
 
         plt.ioff()
 
-def generation_test(n_players: int) -> List:
+def generation_duplicates_test(n_players: int) -> List:
     vocab_file = f"finalweights/vocab.txt"
     vocab = load_vocab(vocab_file)
     model = create_model(vocab)

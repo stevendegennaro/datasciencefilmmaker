@@ -77,13 +77,13 @@ def generate(model: keras.models, vocab: Vocabulary) -> str:
     x[0, 0, vocab.w2i[START]] = 1.0
     # Encode the starting character
     for t in range(1,maxlen):
-        start_time = timer()
         # Generate the next character
         probabilities = model.predict(x, verbose=0)[0]
         next_letter = vocab.i2w[sample_from(probabilities)]
         string += next_letter
         # If this is our STOP character, we're done
         if string[-1] == STOP:
+            # Return the name minus the START and STOP characters
             return string[1:-1]
         # If not, then add this to our string and
         # go back through the loop again.

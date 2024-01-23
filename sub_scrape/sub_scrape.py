@@ -79,12 +79,12 @@ def get_new_jobs():
     new_jobs = filtered_jobs[~(filtered_jobs['Employee'].isin(old_jobs['Employee']) & \
                              filtered_jobs['Job Start Date'].isin(old_jobs['Job Start Date']))]
 
-    if len(new_jobs) > 0:
-        # Output jobs list for comparison next time through the loop
-        old_jobs = pd.concat([old_jobs,new_jobs])
-        old_jobs.to_csv('old_jobs.csv',index=False)
+    # Output jobs list for comparison next time through the loop
+    old_jobs = pd.concat([old_jobs,new_jobs])
+    old_jobs.to_csv('old_jobs.csv',index=False)
 
-        # And then send me an email or a text
+    if len(new_jobs) > 0:
+        # If there are new jobs, send me a text
         # Include date, day of the week, number of days, school, time, and Job Title
         message = ""
         for _,row in new_jobs.iterrows():
