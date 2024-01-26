@@ -136,17 +136,26 @@ def train(model: Model,
 def generate(model: Model, 
              vocab: Vocabulary, 
              max_len: int = 160) -> str:
+
+    # Reset the state of the hidden layers
     model.layers[0].reset_hidden_state()
     model.layers[1].reset_hidden_state()
+    # Start with a list containing only the START character
     output = [START]
 
+    # Loop to generate the name, one letter at a time
+    # until we hit our STOP character or maximum length
     while output[-1] != STOP and len(output) < max_len:
+        # One-hot encode the previous letter 
         this_input = vocab.one_hot_encode(output[-1])
+        # Predict the next letter
         predicted = model.forward(this_input)
         probabilities = softmax(predicted)
         next_char_id = sample_from(probabilities)
+        # Add the letter to the end of the output and go back
         output.append(vocab.get_word(next_char_id))
 
+    # Return the output minus START and STOP characters
     return ''.join(output[1:-1])
 
 def get_vocab(names: List) -> Vocabulary:
@@ -361,18 +370,19 @@ def training_speed_test(n_epochs: int,
 
         plt.ioff()
 
-def generation_duplicates_test(n_players: int) -> List:
+
+### Tests how long it takes to generate n_players names
+### Then calculates how many of those names are already
+### in the names list. Repeats for last names. Returns a
+### dictionary with lists of the duplicates
+def generation_test(n_players: int) -> dict:
     vocab_file = f"finalweights/vocab.txt"
     vocab = load_vocab(vocab_file)
-    model = create_model(vocab)
-
-    # Load in the names of the players and
-    # set the filenames to be used to read/store
-    # vocab info and network weights
+    
+    # Load in the names of the players
     firstnames, lastnames, _ = import_names()
     firstnames = set([name[1:-1] for name in firstnames])
     lasstnames = set([name[1:-1] for name in lastnames])
-
     names = {'firstnames': firstnames,'lastnames':lastnames}
     duplicates = {}
 
@@ -380,6 +390,7 @@ def generation_duplicates_test(n_players: int) -> List:
         weight_file = f"finalweights/{key}_weights.txt"
 
         # Set up neural network
+        model = create_model(vocab)
         load_weights(model,weight_file)
 
         start_time = datetime.now()
@@ -393,6 +404,9 @@ def generation_duplicates_test(n_players: int) -> List:
         difference = end_time - start_time
         print(f"Total generation time = ",difference)
 
+        ### This part calculates how many of the names
+        ### that we just generated are already in our
+        ### list of names.
         duplicates[key] = []
         count = 0
         for name in tqdm.tqdm(generated_names):
@@ -404,8 +418,10 @@ def generation_duplicates_test(n_players: int) -> List:
 
     return duplicates
 
+
 ### Tests how long it takes to generate n_players names
-def generation_timing_test(n_players: int) -> None:
+### as a function of the length of the name
+def generation_timing_test(n_players: int) -> pd.DataFrame:
     vocab_file = f"finalweights/vocab.txt"
     vocab = load_vocab(vocab_file)
 
@@ -470,13 +486,47 @@ def generated_frequency_test(duplicates: Dict):
     fig.suptitle("Frequency Comparison of First Names\nin Generated List vs Original")
     plt.show()
 
-### Takes a list of letters that may or may not contain duplicates
+### Find the accuracy of a trained network using either
+### 'sample_from' or 'argmax'
+def manual_accuracy_test(which:str = 'first', method:str = 'argmax') -> None:
+
+    global START, STOP, maxlen
+    START = "^"
+    STOP = "$"
+
+    print(f"Calculating accuracy for {which}names...")
+
+    # Load in the names of the players and
+    # set the filenames to be used to read
+    # vocab info and network weights
+    firstnames, lastnames, suffixes = import_names()
+    if which == 'last':
+        names = lastnames
+    elif which == 'first':
+        names = firstnames
+    else:
+        assert False, 'Must choose firstnames or lastnames'
+    weight_file = f"finalweights/{which}names_weights.txt"
+
+    vocab_file = f"finalweights/vocab.txt"
+    vocab = load_vocab(vocab_file)
+
+    # Create model
+    print(f"Loading weights from {weight_file}...")
+    model = create_model(vocab)
+    load_weights(model,weight_file)
+
+    accuracy = calculate_accuracy(model, names, vocab, method)
+
+    print(f"Total accuracy is {accuracy*100:.2f}% for {which}names using method '{method}'")
+
+### Takes a list of letters that may contain duplicates
 ### Returns the maximum accuracy one could acheive by
 ### choosing a letter at random according to its frequency in the list
 ### and then "predicting" that letter, also according to the
-### frequency in the list. The accuracy for a given letter is the 
-### square of the probability of choosing that letter divided by
-### the square of the total number of items in the list (including dupes)
+### frequency in the list. Put another way, if you draw two 
+### letters randomly from the list (with replacement),
+### what are the odds that you draw the same letter twice?
 def predict_accuracy(letters_list):
     count = Counter(letters_list)
     probs = np.array(list(count.values()))
@@ -484,11 +534,11 @@ def predict_accuracy(letters_list):
     square_of_sum = np.sum(probs)**2
     return sum_of_squares / square_of_sum
 
-def predict_most_likely(letters_list):
-    # What if instead of drawing from the list of letter with 
-    # frequency given by the list, we instead always draw
-    # the most frequent letter in the list (or if there is a
-    # tie, we choose at random from among the ties)
+# What if instead of drawing from the list of letter with 
+# frequency given by the list, we instead always draw
+# the most frequent letter in the list (or if there is a
+# tie, we choose at random from among the ties)
+def get_most_likely(letters_list):
     count = dict(Counter(letters_list))
     most_likely = np.random.choice([key for key, value in count.items() if value == max(count.values())])
     prob = count[most_likely]/sum(count.values())
@@ -535,7 +585,7 @@ def calculate_max_accuracy() -> float:
 
 ### Calculate the theoretical maximum accuracy of the network, 
 ### given the list of names, always choosing the most likely
-### letter given that input
+### letter (i.e. the mode) for a given input
 def calculate_max_likelihood() -> float:
 
     # Import the names and stick them in a dictionary
@@ -567,40 +617,10 @@ def calculate_max_likelihood() -> float:
         print("Calculating accuracy...")
         accuracy = 0.0
         for k in tqdm.tqdm(set_dict.keys()):
-            accuracy += input_frequency[k] * predict_most_likely(set_dict[k])
+            accuracy += input_frequency[k] * get_most_likely(set_dict[k])
             
         print(accuracy)
 
-def manual_accuracy_test(which:str = 'first', method:str = 'argmax') -> None:
 
-    global START, STOP, maxlen
-    START = "^"
-    STOP = "$"
-
-    print(f"Calculating accuracy for {which}names...")
-
-    # Load in the names of the players and
-    # set the filenames to be used to read
-    # vocab info and network weights
-    firstnames, lastnames, suffixes = import_names()
-    if which == 'last':
-        names = lastnames
-    elif which == 'first':
-        names = firstnames
-    else:
-        assert False, 'Must choose firstnames or lastnames'
-    weight_file = f"finalweights/{which}names_weights.txt"
-
-    vocab_file = f"finalweights/vocab.txt"
-    vocab = load_vocab(vocab_file)
-
-    # Create model
-    print(f"Loading weights from {weight_file}...")
-    model = create_model(vocab)
-    load_weights(model,weight_file)
-
-    accuracy = calculate_accuracy(model, names, vocab, method)
-
-    print(f"Total accuracy is {accuracy*100:.2f}% for {which}names using method '{method}'")
 
 

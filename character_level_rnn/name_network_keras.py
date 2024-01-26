@@ -5,9 +5,7 @@
 # at a time, then adding a random suffix from the list of suffixes
 
 import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 import tensorflow as tf
-
 from typing import Callable
 from tensorflow import keras
 from lite_model import LiteModel
@@ -19,34 +17,70 @@ from dsfs_vocab import Vocabulary, save_vocab, load_vocab
 import sys
 from datetime import datetime
 import tqdm
-from name_network_scratch import import_names
+# from name_network_scratch import import_names
 import matplotlib.pyplot as plt
 from timeit import default_timer as timer
 
-
-def import_names(which):
-    global START, STOP, maxlen
-    START = "^"
-    STOP = "$"
-
+### Shuffle names so we can split into train and test data
+### I only ran once and stored these in a file so I could
+### get a clean comparison between different networks using
+### the same train and test data
+def shuffle_names() -> list[str]:
     #Import the names from the file
     namesfile="data/all_names.json"
     with open(namesfile,"r") as f:
         entries = json.load(f)
     players = [Player(entry) for entry in entries]
-    if which == 'first':
-        names = [(START + player.firstname + STOP) \
-                    for player in players if player.firstname is not None]
-    elif which == 'last':
-        names = [(START + player.lastname + STOP) \
-            for player in players if player.lastname is not None]
-    else:
-        print("Invalid data set")
-        sys.exit()
-
+    names = {}
+    names['firstnames'] = [(START + player.firstname + STOP) \
+                            for player in players if player.firstname is not None]
+    names['lastnames'] = [(START + player.lastname + STOP) for player in players]
+    np.random.shuffle(names['firstnames'])
+    np.random.shuffle(names['lastnames'])
+    with open(shufflefile,'w') as f:
+        json.dump(names,f)
     return names
 
-def build_training_set(names, vocab):
+### Import the names from file and return a dictionary
+### containing lists of first names, last names, and suffixes (e.g. Jr)
+### as well as a Vocabulary (loaded from a different file)
+### The vocab is loaded from a file and was created using this 
+### specific data set. If the network is run on a different 
+### data set, there may be characters that aren't in the 
+### vocabulary and it will need to be created
+def import_names(shuffled = False):
+    global START, STOP, maxlen
+    START = "^"
+    STOP = "$"
+
+    # Import the names from the file
+    if shuffled:
+        with open("data/shuffled_names.json",'r') as f:
+            names = json.load(f)
+        names['suffixes'] = []
+    else:
+        namesfile = "data/all_names.json"
+        with open(namesfile,"r") as f:
+            entries = json.load(f)
+
+        # print(entries)
+        players = [Player(entry) for entry in entries]
+        names = {}
+        names['firstnames'] = [(START + player.firstname + STOP) \
+                                for player in players if player.firstname is not None]
+        names['lastnames'] = [(START + player.lastname + STOP) for player in players]
+        names['suffixes'] = [player.suffix for player in players]
+
+    vocab = load_vocab('finalweights/vocab.txt')
+
+    return names, vocab
+
+# Build the training set. Takes the list of names and
+# creates a list of strings and targets, e.g. "^Chuck#" becomes:
+# inputs:  ['^',    '^C',   '^Ch',  '^Chu', '^Chuc', '^Chuck']
+# targets: ['C',    'h',    'u',    'c',    'k',     '#'     ]
+# It then converts these into matrices of one-hot encoded vectors
+def build_training_set(names: list, vocab: Vocabulary):
 
     print(f"Building training set...")
     inputs = []
@@ -69,18 +103,54 @@ def build_training_set(names, vocab):
             x[i, t, vocab.w2i[char]] = 1
         y[i, vocab.w2i[targets[i]]] = 1
 
-    return x,y
+    # For the masking layer
+    padding_value = np.zeros((vocab.size,))
 
+    return x,y,padding_value
 
-# Takes a list of weights and returns a random
-# index chosen based on the weights
-def sample_from(weights: np.array) -> int:
-    total = sum(weights)
-    rnd = total * np.random.random()
-    for i,w in enumerate(weights):
-        rnd -= w 
-        if rnd <= 0: return i
+#########################
+### Creates the model ###
+#########################
+def create_model(padding_value,maxlen,vocab,HIDDEN_DIM,learning_rate,model_type = 'RNN'):
+    if model_type == 'RNN':
+        model = keras.Sequential(
+            [
+                keras.layers.Masking(mask_value=padding_value, input_shape=(maxlen, vocab.size)),
+                keras.layers.SimpleRNN(HIDDEN_DIM,return_sequences=True),
+                keras.layers.SimpleRNN(HIDDEN_DIM,),
+                keras.layers.Dense(vocab.size, activation="softmax"),
+            ]
+        )
+    elif model_type == 'LSTM':
+        model = keras.Sequential(
+            [
+                keras.layers.Masking(mask_value=padding_value, input_shape=(maxlen, vocab.size)),
+                keras.layers.LSTM(HIDDEN_DIM,return_sequences=True),
+                keras.layers.LSTM(HIDDEN_DIM,),
+                keras.layers.Dense(vocab.size, activation="softmax"),
+            ]
+        )
+    else:
+        print(f"Invalid model type '{model_type}'. Exiting...")
+        sys.exit()
 
+    optimizer = keras.optimizers.RMSprop(learning_rate = learning_rate)
+    model.compile(loss="categorical_crossentropy", optimizer=optimizer, metrics=['accuracy'])
+    return model
+
+def convert_to_lite(model):
+    converter = tf.lite.TFLiteConverter.from_keras_model(model)
+    converter.target_spec.supported_ops = [
+        tf.lite.OpsSet.TFLITE_BUILTINS, 
+        tf.lite.OpsSet.SELECT_TF_OPS]
+    converter._experimental_lower_tensor_list_ops = False
+    tflite_model = converter.convert()
+    lmodel = LiteModel(tf.lite.Interpreter(model_content=tflite_model))
+    return lmodel
+
+#################
+### Callbacks ###
+#################
 
 class OutputHistory(keras.callbacks.Callback):
     def __init__(self, history_file):
@@ -105,6 +175,9 @@ class OutputHistory(keras.callbacks.Callback):
         with open(self.history_file, mode='w') as f:
             self.hist_df.to_csv(f, index = False)
 
+##################
+### Schedulers ###
+##################
 ### This is currrently very kludgey, but it's not worth 
 ### the time at the moment to do something more elegant
 def step_down_1000(epoch: int, lr: float) -> float:
@@ -117,16 +190,25 @@ def step_down_1000(epoch: int, lr: float) -> float:
     else:
         return 0.001
 
-def exponential(epoch: int, lr: float) -> float:
-    learning_rate = initial_learning_rate * decay_rate^(step / decay_steps)
-
+def step_down_LSTM(epoch: int, lr: float) -> float:
+    if epoch < 5:
+        return 0.01
+    elif epoch < 15:
+        return 0.005
+    elif epoch < 25:
+        return 0.002
+    else:
+        return 0.001
 
 def flat(epoch: int, lr: float) -> float:
     # if epoch < 5:
-        return 0.001
+        # return 0.001
     # else:
         return lr
 
+################
+### Generate ###
+################
 # Use the trained network to generate a single new name
 def generate(model: keras.models, vocab: Vocabulary) -> str:
     # Start with our starting character
@@ -137,7 +219,7 @@ def generate(model: keras.models, vocab: Vocabulary) -> str:
     for t in range(1,maxlen):
         # Generate the next character
         probabilities = model.predict(x, verbose=0)[0]
-        next_letter = vocab.i2w[sample_from(probabilities)]
+        next_letter = vocab.i2w[np.random.choice(len(probabilities),p=probabilities)]
         string += next_letter
         # If this is our STOP character, we're done
         if string[-1] == STOP:
@@ -150,133 +232,74 @@ def generate(model: keras.models, vocab: Vocabulary) -> str:
     # So return the string without the start character
     return string[1:]
 
-### Shuffle names so we can split into train and test data
-### I only ran once and stored these in a file so I could
-### get a clean comparison between different networks using
-### the same train and test data
-def shuffle_names() -> list[str]:
-    #Import the names from the file
-    namesfile="data/all_names.json"
-    with open(namesfile,"r") as f:
-        entries = json.load(f)
-    players = [Player(entry) for entry in entries]
-    names = {}
-    names['firstnames'] = [(START + player.firstname + STOP) \
-                            for player in players if player.firstname is not None]
-    names['lastnames'] = [(START + player.lastname + STOP) for player in players]
-    np.random.shuffle(names['firstnames'])
-    np.random.shuffle(names['lastnames'])
-    with open(shufflefile,'w') as f:
-        json.dump(names,f)
-    return names
+
+###################
+### Run Network ###
+###################
 
 ### Creates and trains a network on entire data set and stores in a file
     # tr = list of how many epochs to train [firstnames,lastnames]
     # gn = number of names to generate when finished ('None' if you don't want)
     # batch_size = keras batch_size, i.e. the number of names to run through
-    # the network before updating. Each epoch still uses all names
+    #   the network before updating. Each epoch still uses all names
     # cont = continue from the last run?
-def run_network(tr: list[int,int] = [0,0], 
-                  gn: int = 20,
-                  batch_size: int = None, 
-                  scheduler: str = 'flat',
-                  cont: bool = False,
-                  HIDDEN_DIM: int = 32,
-                  file_suffix = '') -> None:
+    # shuffled = run on the pre-shuffled list of names
+def train_network(tr: list[int,int] = [0,0], 
+                gn: int = 20,
+                batch_size: int = None, 
+                scheduler: str = 'step_down_1000',
+                cont: bool = False,
+                HIDDEN_DIM: int = 32,
+                file_stem = '',
+                model_type = 'RNN',
+                validation_split = 0.0,
+                learning_rate = 0.001,
+                shuffled = False) -> None:
+ 
     start_time = datetime.now()
     print(f"Start time = ",start_time.strftime('%H:%M:%S'))
-
-    # Define the start and end characters of every name
-    global START, STOP, maxlen
-    START = "^"
-    STOP = "$"
 
     # Converts the name of a funciton into the function
     scheduler = globals()[scheduler]
 
-    # Import the names from the file
-    namesfile="data/all_names.json"
-    with open(namesfile,"r") as f:
-        entries = json.load(f)
-    players = [Player(entry) for entry in entries]
-    names = {}
-    names['firstnames'] = [(START + player.firstname + STOP) for player in players if player.firstname is not None]
-    names['lastnames'] = [(START + player.lastname + STOP) for player in players]
-    suffixes = [player.suffix for player in players]
-
     # Load the vocab file
-    vocabfile = f'finalweights/vocab.txt'  # Where to find the vocab file
-    if os.path.isfile(vocabfile):
-        print(f"Loading vocab file ({vocabfile})")
-        vocab = load_vocab(vocabfile)
-    else:
-        print("Vocab file does not exit")
-        sys.exit()
+    names, vocab = import_names(shuffled)
 
     runs = ['firstnames','lastnames']
     generated_names = {'firstnames':[],'lastnames':[]}
 
     for r,run in enumerate(runs):
-        model_file = f'tfweights/{run}.keras'
-        history_file = f'tfweights/{run}.history'
+        model_file = f'tfweights/{run}_{file_stem}.keras'
+        history_file = f'tfweights/{run}_{file_stem}.history'
 
-        # Build the training set. Takes the list of names and
-        # creates a list of strings and targets, e.g. "^Chuck#" becomes:
-        # inputs:  ['^',    '^C',   '^Ch',  '^Chu', '^Chuc', '^Chuck']
-        # targets: ['C',    'h',    'u',    'c',    'k',     '#'     ]
-        print(f"Building training set for {run}")
-        inputs = []
-        targets = []
-        for name in names[run]:
-            for i in range(1,len(name)):
-                inputs.append(name[:i])
-                targets.append(name[i])
-
-        # Global variable needed to define the size of the network input
-        maxlen = max(len(string) for string in inputs)
-
-        # One-hot encode inputs and targets and put into np array
-        print("One-hot encoding inputs and targets")
-        x = np.zeros((len(inputs), maxlen, vocab.size), dtype=np.float32)
-        y = np.zeros((len(inputs), vocab.size), dtype=np.float32)
-        for i, string in enumerate(inputs):
-            for t, char in enumerate(string):
-                x[i, t, vocab.w2i[char]] = 1
-            y[i, vocab.w2i[targets[i]]] = 1
-
-        # For the masking layer
-        padding_value = np.zeros((vocab.size,))
+        x,y,padding_value = build_training_set(names[run], vocab)
 
         if cont:
             if os.path.isfile(model_file):
                 model = keras.models.load_model(model_file)
+                tf.keras.backend.set_value(model.optimizer.learning_rate, learning_rate)
             else:
                 print("Model file does not exist")
                 sys.exit()
         else:
-            # HIDDEN_DIM = 128
-            model = keras.Sequential(
-                [
-                    keras.layers.Masking(mask_value=padding_value, input_shape=(maxlen, vocab.size)),
-                    keras.layers.SimpleRNN(HIDDEN_DIM,return_sequences=True),
-                    keras.layers.SimpleRNN(HIDDEN_DIM,),
-                    keras.layers.Dense(vocab.size, activation="softmax"),
-                ]
-            )
-            optimizer = keras.optimizers.RMSprop()
-            model.compile(loss="categorical_crossentropy", optimizer=optimizer, metrics=['accuracy'])
+            model = create_model(padding_value,
+                                 maxlen,vocab,
+                                 HIDDEN_DIM,
+                                 learning_rate = learning_rate,
+                                 model_type = model_type)
 
         if tr[r]:
             output_callback = OutputHistory(history_file)
             schedule_callback = keras.callbacks.LearningRateScheduler(scheduler)
             checkpoint_callback = keras.callbacks.ModelCheckpoint(filepath=model_file,
-                                                                 monitor='loss',
-                                                                 mode='min',
-                                                                 save_best_only=True)
+                                                                  monitor='accuracy',
+                                                                  mode='max',
+                                                                  save_best_only=True)
             history = model.fit(x, 
                                 y, 
                                 epochs=tr[r], 
-                                batch_size = batch_size, 
+                                batch_size = batch_size,
+                                validation_split = validation_split,
                                 callbacks = [output_callback,schedule_callback,checkpoint_callback])
 
             model.save(model_file)
@@ -288,7 +311,7 @@ def run_network(tr: list[int,int] = [0,0],
 
 
     def random_suffix() -> str:
-        suffix = np.random.choice(suffixes)
+        suffix = np.random.choice(names['suffixes']) if names['suffixes'] else None
         return suffix if suffix is not None else ""
 
     for i in range(gn):
@@ -298,122 +321,31 @@ def run_network(tr: list[int,int] = [0,0],
     difference = end_time - start_time
     print(f"Total run time = ",difference)
 
-def training_speed_test(n_epochs: int = 20, 
-                        batch_size: int = None, 
-                        cont: bool = False,
-                        scheduler: str = 'step_down',
-                        learning_rate = 0.01,
-                        HIDDEN_DIM: int = 32,
-                        file_suffix = '') -> None:
-
-    # Define the start and end characters of every name
-    global START, STOP, maxlen, fig
-    START = "^"
-    STOP = "$"
-    scheduler = globals()[scheduler]
-
-    # Load the shuffled names
-    shufflefile="data/shuffled_names.json"
-    vocabfile = 'finalweights/vocab.txt'
-    with open(shufflefile,'r') as f:
-        names = json.load(f)
-    vocab = load_vocab(vocabfile)
-
-    runs = ['firstnames','lastnames']
-    for run in runs:
-
-        model_file = f'tfweights/{run}_{file_suffix}.keras'
-        history_file = f"tfweights/{run}_{file_suffix}.history"
-
-        # Build the training set
-        print(f"Building training set for {run}")
-        inputs = []
-        targets = []
-        for name in names[run]:
-            for i in range(1,len(name)):
-                inputs.append(name[:i])
-                targets.append(name[i])
-
-        maxlen = max(len(string) for string in inputs)
-
-        # One-hot encode inputs and targets and put into np array
-        print("One-hot encoding inputs and targets")
-        x = np.zeros((len(inputs), maxlen, vocab.size), dtype=np.float32)
-        y = np.zeros((len(inputs), vocab.size), dtype=np.float32)
-        for i, string in enumerate(inputs):
-            for t, char in enumerate(string):
-                x[i, t, vocab.w2i[char]] = 1
-            y[i, vocab.w2i[targets[i]]] = 1
-
-        padding_value = np.zeros((vocab.size,))
-
-        if cont:
-            if os.path.isfile(model_file):
-                model = keras.models.load_model(model_file)
-            else:
-                print("Model file does not exist")
-                sys.exit()
-        else:
-            # HIDDEN_DIM = 128
-            model = keras.Sequential(
-                [
-                    keras.layers.Masking(mask_value=padding_value, input_shape=(maxlen, vocab.size)),
-                    keras.layers.SimpleRNN(HIDDEN_DIM,return_sequences=True),
-                    keras.layers.SimpleRNN(HIDDEN_DIM,),
-                    keras.layers.Dense(vocab.size, activation="softmax"),
-                ]
-            )
-            optimizer = keras.optimizers.RMSprop(learning_rate=learning_rate)
-            model.compile(loss="categorical_crossentropy", 
-                          optimizer=optimizer, 
-                          metrics=['accuracy'])
-
-        start_time = datetime.now()
-        print(f"Start time = ",start_time.strftime('%H:%M:%S'))
-
-        output_callback = OutputHistory(history_file)
-        schedule_callback = keras.callbacks.LearningRateScheduler(scheduler)
-        history = model.fit(x, 
-                            y, 
-                            epochs=n_epochs, 
-                            batch_size = batch_size, 
-                            validation_split = 0.2,
-                            callbacks = [output_callback,schedule_callback])
-
-        model.save(model_file)
-
-        end_time = datetime.now()
-        difference = end_time - start_time
-        print(f"Total run time for {run} = ", difference)
-
-
-### Tests how long it takes to generate n_players names
+### Tests how long it takes to generate n_players first names
 ### Then calculates how many of those names are already
-### in the names list. Repeats for last names. Returns a
-### dictionary with lists of the duplicates
-def generation_test(n_players: int) -> dict:
-    vocab_file = f"finalweights/vocab.txt"
-    vocab = load_vocab(vocab_file)
+### in the first names list. Repeats for last names. Returns
+### a dictionary with lists of the duplicates
+def generation_test(file_stem, n_players: int) -> dict:
 
-    # Load in the names of the players and
-    # set the filenames to be used to read/store
-    # vocab info and network weights
-    firstnames, lastnames, _ = import_names()
-    firstnames = set([name[1:-1] for name in firstnames])
-    lastnames = set([name[1:-1] for name in lastnames])
+    # tf.compat.v1.disable_eager_execution()
+    # Load in the names of the players and vocab
+    names, vocab = import_names()
+    names['firstnames'] = set([name[1:-1] for name in names['firstnames']])
+    names['lastnames'] = set([name[1:-1] for name in names['lastnames']])
+    del names['suffixes']
 
-    names = {'firstnames': firstnames,'lastnames':lastnames}
     duplicates = {}
-
-    global START, STOP, maxlen
-    START = "^"
-    STOP = "$"
 
     for key in names:
         # Set up neural network
-        model_file = f'finalweights/firstnames_RNN_1000_32.keras'
+        model_file = f'finalweights/{key}_{file_stem}.keras'
         model = keras.models.load_model(model_file)
+        # lmodel = convert_to_lite(model)
+
+        global maxlen
         maxlen = model.layers[0].output_shape[1]
+
+        ### Add tflite here
 
         start_time = datetime.now()
         print(f"Generating {key} names",start_time.strftime('%H:%M:%S'))
@@ -437,53 +369,18 @@ def generation_test(n_players: int) -> dict:
 
     return duplicates
 
-def generation_timing_test(n_players: int) -> list[float]:
-    # tf.compat.v1.disable_eager_execution()
-    vocab_file = f"finalweights/vocab.txt"
-    vocab = load_vocab(vocab_file)
-
-    global START, STOP, maxlen
-    START = "^"
-    STOP = "$"
-
-    # Set up neural network
-    model_file = f'finalweights/lastnames_rnn.keras'
-    model = keras.models.load_model(model_file)
-    maxlen = model.layers[0].output_shape[1]
-
-    times = []
-    for _ in tqdm.tqdm(range(n_players)):
-        start_time = timer()
-        name = generate(model, vocab)
-        end_time = timer()
-        difference = end_time - start_time
-        times.append(difference)
-
-    return times
-
-
 def manual_accuracy_test(model_file, method = 'argmax'):
 
-    vocab_file = f"finalweights/vocab.txt"
-    vocab = load_vocab(vocab_file)
+    names, vocab = import_names()
     if 'first' in model_file:
-        names = import_names('first')
-    if 'last' in model_file:
-        names = import_names('last')
-    x,y = build_training_set(names, vocab)
-    padding_value = np.zeros((vocab.size,))
+        x, y, padding_value = build_training_set(names['firstnames'], vocab)
+    elif 'last' in model_file:
+        x, y, padding_value = build_training_set(names['lastnames'], vocab)
         
     # Set up the model
-    tf.get_logger().setLevel('ERROR')
     model = keras.models.load_model(model_file)
-    lmodel = model
-    converter = tf.lite.TFLiteConverter.from_keras_model(model)
-    converter.target_spec.supported_ops = [
-        tf.lite.OpsSet.TFLITE_BUILTINS, 
-        tf.lite.OpsSet.SELECT_TF_OPS]
-    converter._experimental_lower_tensor_list_ops = False
-    tflite_model = converter.convert()
-    lmodel = LiteModel(tf.lite.Interpreter(model_content=tflite_model))
+    # lmodel = model
+    lmodel = convert_to_lite(model)
 
     count = 0
     with tqdm.trange(len(x)) as t:
@@ -493,7 +390,7 @@ def manual_accuracy_test(model_file, method = 'argmax'):
             if method == 'argmax':
                 y_pred[np.argmax(probabilities)] = 1.0
             elif method == 'sample_from':
-                y_pred[sample_from(probabilities)] = 1.0
+                y_pred[np.random.choice(len(probabilities),p=probabilities)] = 1.0
             else:
                 print("Invalid method...")
                 sys.exit()
@@ -506,16 +403,12 @@ def evaluate(model_file):
 
     # Load the model
     model = tf.keras.models.load_model(model_file)
-    maxlen = model.layers[0].output_shape[1]
 
-    vocab_file = f"finalweights/vocab.txt"
-    vocab = load_vocab(vocab_file)
+    names, vocab = import_names()
     if 'first' in model_file:
-        names = import_names('first')
-    if 'last' in model_file:
-        names = import_names('last')
-    x,y = build_training_set(names, vocab)
-    padding_value = np.zeros((vocab.size,))
-
+        x, y, padding_value = build_training_set(names['firstnames'], vocab)
+    elif 'last' in model_file:
+        x, y, padding_value = build_training_set(names['lastnames'], vocab)
+    
     model.evaluate(x,y)
 
