@@ -3,8 +3,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 from collections import Counter
+import json
+from player import Player
 
-def import_names(namesfile: str = "data/all_names.json") -> Tuple:
+def import_names(namesfile: str = "data/all_names.json"):
     # Define the start and end characters of every name
     global START, STOP
     START = "^"
@@ -155,12 +157,10 @@ def longtail_frequency():
     fn_df.columns= ['First Names']
     ln_df.sort_values(by=['Last Names'],ascending = False,inplace =  True)
     fn_df.sort_values(by=['First Names'],ascending = False,inplace =  True)
-    print(len(ln_df),len(fn_df))
+    print(len(fn_df),len(ln_df))
     n_names = 200
     ln_df = ln_df.iloc[0:n_names]
     fn_df = fn_df.iloc[0:n_names]
-    # print(ln_df)
-    # print(fn_df)
     fig,ax = plt.subplots()
     fn_df.plot(ax = ax, kind='bar', width=1)
     ln_df.plot(ax = ax, kind='bar', width=1,color="red")
@@ -174,6 +174,8 @@ def longtail_frequency():
     ax.set_title("Frequency of First and Last Names\nAmong MLB Baseball Players")
     ax.set_xlabel("Name")
     plt.show()
+
+    return fn_df,ln_df
 
 def firstnames_comparison_plot():
     history1 = pd.read_csv("weights/firstnames_0.01_500_history.txt")
@@ -205,8 +207,8 @@ def lastnames_comparison_plot():
     plt.show()
 
 def neurons_comparison_plot_firstnames():
-    history1 = pd.read_csv("tfweights/firstnames_1000_32.history")
-    history2 = pd.read_csv("tfweights/firstnames_1000_128.history")
+    history1 = pd.read_csv("tfweights/firstnames_32.history")
+    history2 = pd.read_csv("tfweights/firstnames_128.history")
 
     fig,ax = plt.subplots()
     ax.plot(history1['time'],history1["val_accuracy"],color="black", label="32 Hidden Units")
@@ -219,8 +221,8 @@ def neurons_comparison_plot_firstnames():
     plt.show()
 
 def neurons_comparison_plot_lastnames():
-    history1 = pd.read_csv("tfweights/lastnames_1000_32.history")
-    history2 = pd.read_csv("tfweights/lastnames_1000_128.history")
+    history1 = pd.read_csv("tfweights/lastnames_32.history")
+    history2 = pd.read_csv("tfweights/lastnames_128.history")
 
     fig,ax = plt.subplots()
     ax.plot(history1['time'],history1["val_accuracy"],color="black", label="32 Hidden Units")
@@ -233,8 +235,8 @@ def neurons_comparison_plot_lastnames():
     plt.show()
 
 def lstm_comparison_plot_firstnames():
-    history1 = pd.read_csv("finalweights/firstnames_RNN_1000_32.history")
-    history2 = pd.read_csv("finalweights/firstnames_RNN_1000_128.history")
+    history1 = pd.read_csv("finalweights/firstnames_RNN_32.history")
+    history2 = pd.read_csv("finalweights/firstnames_RNN_128.history")
     history3 = pd.read_csv("tfweights/firstnames_LSTM.history")
 
     fig,ax = plt.subplots()
@@ -249,8 +251,8 @@ def lstm_comparison_plot_firstnames():
     plt.show()
 
 def lstm_comparison_plot_lastnames():
-    history1 = pd.read_csv("finalweights/lastnames_1000_32.history")
-    history1_p2 = pd.read_csv("finalweights/lastnames_1000_32_full.history")
+    history1 = pd.read_csv("finalweights/lastnames_32.history")
+    history1_p2 = pd.read_csv("finalweights/lastnames_32_full.history")
     history2 = pd.read_csv("tfweights/lastnames_LSTM.history")
 
     fig,ax = plt.subplots()
@@ -505,6 +507,139 @@ def generation_time_eager_disabled():
     ax.legend(loc='upper left', ncols=1)
     ax.set_ylim(0, max(scratch + keras_32 + keras_128 + lstm)+500)
 
+    plt.show()
+
+def generation_time_all():
+
+    scratch = [5.8, 7.5]
+    graph = [4311,7204]
+    eager = [267,373]
+    tflite = [166, 177]
+
+    which = ("First Names", "Last Names")
+    accuracy = {
+        'Scratch Network': (scratch[0], scratch[1]),
+        'Keras - Eager Mode': (graph[0], graph[1]),
+        'Keras - Graph mode': (eager[0], eager[1]),
+        'Keras - TensorFlow Lite': (tflite[0], tflite[1]),
+    }
+
+    x = np.arange(len(which))  # the label locations
+    width = 0.2  # the width of the bars
+    multiplier = 0
+
+    fig, ax = plt.subplots(layout='constrained')
+
+    for attribute, measurement in accuracy.items():
+        offset = width * multiplier
+        rects = ax.bar(x + offset, measurement, width, label=attribute)
+        ax.bar_label(rects, padding=3)
+        multiplier += 1
+
+    # Add some text for labels, title and custom x-axis tick labels, etc.
+    ax.set_ylabel('Generation Time (s)')
+    ax.set_title('Generation Time Comparison for 10,000 Names\n' +
+                 'Different Keras Modes')
+    ax.set_xticks(x + 2*width, which)
+    ax.legend(loc='upper left', ncols=1)
+    ax.set_ylim(0, max(scratch + graph + eager + tflite)+500)
+
+    plt.show()
+
+
+def generation_accuracy():
+
+    scratch = [63.1, 9.0]
+    keras_32 = [72.7,14.54]
+    keras_128 = [88.6,49.8]
+    keras_lstm = [75.78, 21.26]
+
+    which = ("First Names", "Last Names")
+    accuracy = {
+        'Scratch Network': (scratch[0], scratch[1]),
+        'Keras Network (RNN, 32)': (keras_32[0], keras_32[1]),
+        'Keras Network (RNN, 128)': (keras_128[0], keras_128[1]),
+        'Keras Network (LSTM, 32)': (keras_lstm[0], keras_lstm[1]),
+    }
+
+    x = np.arange(len(which))  # the label locations
+    width = 0.2  # the width of the bars
+    multiplier = 0
+
+    fig, ax = plt.subplots(layout='constrained')
+
+    for attribute, measurement in accuracy.items():
+        offset = width * multiplier
+        rects = ax.bar(x + offset, measurement, width, label=attribute)
+        ax.bar_label(rects, padding=3)
+        multiplier += 1
+
+    # Add some text for labels, title and custom x-axis tick labels, etc.
+    ax.set_ylabel('% of Names Recreated')
+    ax.set_title('Generation "Accuracy" Comparison\n')
+    ax.set_xticks(x + 2*width, which)
+    ax.legend(loc='upper right', ncols=1)
+    ax.set_ylim(0, 100)
+
+    plt.show()
+
+def full_name_frequencies():
+    namesfile =  "data/all_names.json"
+    with open(namesfile,"r") as f:
+        entries = json.load(f)
+        players = [Player(entry) for entry in entries]
+
+    full_names = []
+    for i in range(len(players)):
+        full_name = (players[i].firstname if players[i].firstname is not None else "")  + " " + players[i].lastname
+        full_names.append(full_name)
+
+    full_count = Counter(full_names)
+
+    return full_count
+
+    full_df = pd.DataFrame.from_dict(full_count,orient='index')
+    full_df.sort_values(inplace=True)
+
+    return full_df
+
+#### Tests the frequency of generated first names vs the frequency
+#### in the original data set, plotted by length of the name
+    # duplicates = dictionary of generated names 
+    # with keys 'firstnames' and 'lastnames', which are
+    # generated by generation_test()
+def generated_frequency_test(duplicates: dict):
+
+    df = pd.DataFrame.from_dict(Counter(duplicates['firstnames']),orient = 'index').reset_index()
+    df.columns = ['Name','Generated Count']
+    df.sort_values(by = 'Generated Count', ascending = False,inplace = True)
+    firstnames, _, _ = import_names()
+    firstnames = [name[1:-1] for name in firstnames]
+    firstnames_df = pd.DataFrame.from_dict(Counter(firstnames),orient = 'index').reset_index()
+    firstnames_df.columns = ['Name','Count']
+    firstnames_df.sort_values(by = 'Count', ascending = False,inplace = True)
+    merged_df = pd.merge(firstnames_df,df)
+    merged_df['Length'] = merged_df['Name'].str.len()
+    fig = plt.figure(figsize=(5,7))
+    nrows = 4
+    ncols = 2
+    axes = [fig.add_subplot(nrows, ncols, r * ncols + c + 1) for r in range(0, nrows) for c in range(0, ncols)]
+
+    for i,ax in enumerate(axes):
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.scatter(merged_df[merged_df['Length'] == i + 2]['Count'],
+                   merged_df[merged_df['Length'] == i + 2]['Generated Count'],
+                   marker = '.',
+                   c = 'black', label = f"{i+2}")
+        leg = ax.legend(loc = 'lower right',handlelength=0, handletextpad=0, fancybox=True)
+        for item in leg.legendHandles:
+            item.set_visible(False)
+
+    plt.subplots_adjust(wspace=0, hspace=0,left=0.1, right=0.9, top=0.9, bottom=0.05)
+    fig.supxlabel("Frequency of Name in Original List")
+    fig.supylabel("Frequency of Name in Generated List")
+    fig.suptitle("Frequency Comparison of First Names\nin Generated List vs Original")
     plt.show()
 
 # longtail_frequency()

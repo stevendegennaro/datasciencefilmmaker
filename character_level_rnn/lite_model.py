@@ -9,6 +9,10 @@ class LiteModel:
     @classmethod
     def from_keras_model(cls, kmodel):
         converter = tf.lite.TFLiteConverter.from_keras_model(kmodel)
+        converter.target_spec.supported_ops = [
+            tf.lite.OpsSet.TFLITE_BUILTINS, 
+            tf.lite.OpsSet.SELECT_TF_OPS]
+        converter._experimental_lower_tensor_list_ops = False
         tflite_model = converter.convert()
         return LiteModel(tf.lite.Interpreter(model_content=tflite_model))
     
@@ -24,7 +28,7 @@ class LiteModel:
         self.input_dtype = input_det["dtype"]
         self.output_dtype = output_det["dtype"]
         
-    def predict(self, inp):
+    def predict(self, inp, verbose = 0):
         inp = inp.astype(self.input_dtype)
         count = inp.shape[0]
         out = np.zeros((count, self.output_shape[1]), dtype=self.output_dtype)
@@ -34,7 +38,7 @@ class LiteModel:
             out[i] = self.interpreter.get_tensor(self.output_index)[0]
         return out
     
-    def predict_single(self, inp):
+    def predict_single(self, inp, verbose = 0):
         """ Like predict(), but only for a single record. The input data can be a Python list. """
         inp = np.array([inp], dtype=self.input_dtype)
         self.interpreter.set_tensor(self.input_index, inp)

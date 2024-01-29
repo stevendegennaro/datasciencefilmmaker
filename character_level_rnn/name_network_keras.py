@@ -17,29 +17,8 @@ from dsfs_vocab import Vocabulary, save_vocab, load_vocab
 import sys
 from datetime import datetime
 import tqdm
-# from name_network_scratch import import_names
 import matplotlib.pyplot as plt
 from timeit import default_timer as timer
-
-### Shuffle names so we can split into train and test data
-### I only ran once and stored these in a file so I could
-### get a clean comparison between different networks using
-### the same train and test data
-def shuffle_names() -> list[str]:
-    #Import the names from the file
-    namesfile="data/all_names.json"
-    with open(namesfile,"r") as f:
-        entries = json.load(f)
-    players = [Player(entry) for entry in entries]
-    names = {}
-    names['firstnames'] = [(START + player.firstname + STOP) \
-                            for player in players if player.firstname is not None]
-    names['lastnames'] = [(START + player.lastname + STOP) for player in players]
-    np.random.shuffle(names['firstnames'])
-    np.random.shuffle(names['lastnames'])
-    with open(shufflefile,'w') as f:
-        json.dump(names,f)
-    return names
 
 ### Import the names from file and return a dictionary
 ### containing lists of first names, last names, and suffixes (e.g. Jr)
@@ -48,7 +27,7 @@ def shuffle_names() -> list[str]:
 ### specific data set. If the network is run on a different 
 ### data set, there may be characters that aren't in the 
 ### vocabulary and it will need to be created
-def import_names(shuffled = False):
+def import_names(shuffled: bool = False) -> tuple[str,Vocabulary]:
     global START, STOP, maxlen
     START = "^"
     STOP = "$"
@@ -75,12 +54,32 @@ def import_names(shuffled = False):
 
     return names, vocab
 
+### Shuffle names so we can split into train and test data
+### I only ran once and stored these in a file so I could
+### get a clean comparison between different networks using
+### the same train and test data
+def shuffle_names() -> dict[str: list[str]]:
+    #Import the names from the file
+    namesfile="data/all_names.json"
+    with open(namesfile,"r") as f:
+        entries = json.load(f)
+    players = [Player(entry) for entry in entries]
+    names = {}
+    names['firstnames'] = [(START + player.firstname + STOP) \
+                            for player in players if player.firstname is not None]
+    names['lastnames'] = [(START + player.lastname + STOP) for player in players]
+    np.random.shuffle(names['firstnames'])
+    np.random.shuffle(names['lastnames'])
+    with open(shufflefile,'w') as f:
+        json.dump(names,f)
+    return names
+
 # Build the training set. Takes the list of names and
 # creates a list of strings and targets, e.g. "^Chuck#" becomes:
 # inputs:  ['^',    '^C',   '^Ch',  '^Chu', '^Chuc', '^Chuck']
 # targets: ['C',    'h',    'u',    'c',    'k',     '#'     ]
 # It then converts these into matrices of one-hot encoded vectors
-def build_training_set(names: list, vocab: Vocabulary):
+def build_training_set(names: list, vocab: Vocabulary) -> tuple[np.array, np.array, np.array]:
 
     print(f"Building training set...")
     inputs = []
@@ -111,7 +110,12 @@ def build_training_set(names: list, vocab: Vocabulary):
 #########################
 ### Creates the model ###
 #########################
-def create_model(padding_value,maxlen,vocab,HIDDEN_DIM,learning_rate,model_type = 'RNN'):
+def create_model(padding_value: np.array, 
+                 maxlen: int,
+                 vocab: Vocabulary,
+                 HIDDEN_DIM: int,
+                 learning_rate: float,
+                 model_type: str = 'RNN') -> keras.models:
     if model_type == 'RNN':
         model = keras.Sequential(
             [
@@ -138,15 +142,6 @@ def create_model(padding_value,maxlen,vocab,HIDDEN_DIM,learning_rate,model_type 
     model.compile(loss="categorical_crossentropy", optimizer=optimizer, metrics=['accuracy'])
     return model
 
-def convert_to_lite(model):
-    converter = tf.lite.TFLiteConverter.from_keras_model(model)
-    converter.target_spec.supported_ops = [
-        tf.lite.OpsSet.TFLITE_BUILTINS, 
-        tf.lite.OpsSet.SELECT_TF_OPS]
-    converter._experimental_lower_tensor_list_ops = False
-    tflite_model = converter.convert()
-    lmodel = LiteModel(tf.lite.Interpreter(model_content=tflite_model))
-    return lmodel
 
 #################
 ### Callbacks ###
@@ -218,6 +213,7 @@ def generate(model: keras.models, vocab: Vocabulary) -> str:
     # Encode the starting character
     for t in range(1,maxlen):
         # Generate the next character
+
         probabilities = model.predict(x, verbose=0)[0]
         next_letter = vocab.i2w[np.random.choice(len(probabilities),p=probabilities)]
         string += next_letter
@@ -244,17 +240,17 @@ def generate(model: keras.models, vocab: Vocabulary) -> str:
     #   the network before updating. Each epoch still uses all names
     # cont = continue from the last run?
     # shuffled = run on the pre-shuffled list of names
-def train_network(tr: list[int,int] = [0,0], 
+def run_network(tr: list[int,int] = [0,0], 
                 gn: int = 20,
                 batch_size: int = None, 
                 scheduler: str = 'step_down_1000',
                 cont: bool = False,
                 HIDDEN_DIM: int = 32,
-                file_stem = '',
-                model_type = 'RNN',
-                validation_split = 0.0,
-                learning_rate = 0.001,
-                shuffled = False) -> None:
+                file_stem: str = '',
+                model_type: str = 'RNN',
+                validation_split: float = 0.0,
+                learning_rate: float = 0.001,
+                shuffled: bool = False) -> None:
  
     start_time = datetime.now()
     print(f"Start time = ",start_time.strftime('%H:%M:%S'))
@@ -321,12 +317,44 @@ def train_network(tr: list[int,int] = [0,0],
     difference = end_time - start_time
     print(f"Total run time = ",difference)
 
+### Generate a list of n_players, first and last names
+### Does not generate suffixes because at the moment
+### I can't be bothered and they are not part of my analysis
+def generate_players(file_stem: str, n_players: int) -> dict[str: list[str]]:
+
+    global maxlen
+    names, vocab = import_names()
+
+    runs = ['firstnames','lastnames']
+    generated_names = {'firstnames':[],'lastnames':[]}
+
+    for run in runs:
+        print(f"Generating {run}...")
+        model_file = f'finalweights/keras/{run}_{file_stem}.keras'
+        model = keras.models.load_model(model_file)
+        maxlen = model.layers[0].output_shape[1]
+        model = LiteModel.from_keras_model(model)
+
+        x = np.zeros((1, maxlen, vocab.size))
+        x[0, 0, vocab.w2i[START]] = 1.0
+
+        with tqdm.trange(n_players) as t:
+            for _ in t:
+                generated_names[run].append(generate(model,vocab))
+
+    return generated_names
+
+
+
+
 ### Tests how long it takes to generate n_players first names
 ### Then calculates how many of those names are already
 ### in the first names list. Repeats for last names. Returns
 ### a dictionary with lists of the duplicates
-def generation_test(file_stem, n_players: int) -> dict:
+def generation_test(file_stem: str, n_players: int) -> \
+        tuple[dict[str: list[str]],dict[str: float],dict[str: float]]:
 
+    global maxlen
     # tf.compat.v1.disable_eager_execution()
     # Load in the names of the players and vocab
     names, vocab = import_names()
@@ -335,17 +363,15 @@ def generation_test(file_stem, n_players: int) -> dict:
     del names['suffixes']
 
     duplicates = {}
+    percent_recreated = {}
+    difference = {}
 
     for key in names:
         # Set up neural network
-        model_file = f'finalweights/{key}_{file_stem}.keras'
+        model_file = f'finalweights/keras/{key}_{file_stem}.keras'
         model = keras.models.load_model(model_file)
-        # lmodel = convert_to_lite(model)
-
-        global maxlen
         maxlen = model.layers[0].output_shape[1]
-
-        ### Add tflite here
+        model = LiteModel.from_keras_model(model)
 
         start_time = datetime.now()
         print(f"Generating {key} names",start_time.strftime('%H:%M:%S'))
@@ -355,7 +381,7 @@ def generation_test(file_stem, n_players: int) -> dict:
             generated_names.append(generate(model, vocab))
 
         end_time = datetime.now()
-        difference = end_time - start_time
+        difference[key] = end_time - start_time
         print(f"Total generation time = ",difference)
 
         duplicates[key] = []
@@ -365,11 +391,13 @@ def generation_test(file_stem, n_players: int) -> dict:
                 count += 1
                 duplicates[key].append(name)
 
-        print(f"{count} names were already in the list ({count/n_players*100}%)")
+        percent_recreated[key] = count/n_players*100
 
-    return duplicates
+        print(f"{count} names were already in the list ({percent_recreated[key]}%)")
 
-def manual_accuracy_test(model_file, method = 'argmax'):
+    return duplicates, percent_recreated, difference
+
+def manual_accuracy_test(model_file: str, method:str = 'argmax') -> None:
 
     names, vocab = import_names()
     if 'first' in model_file:
@@ -380,12 +408,12 @@ def manual_accuracy_test(model_file, method = 'argmax'):
     # Set up the model
     model = keras.models.load_model(model_file)
     # lmodel = model
-    lmodel = convert_to_lite(model)
+    model = LiteModel.from_keras_model(model)
 
     count = 0
     with tqdm.trange(len(x)) as t:
         for i in t:
-            probabilities = lmodel.predict(x[[i]])[0]
+            probabilities = model.predict(x[[i]])[0]
             y_pred = np.zeros(vocab.size, dtype=np.float32)
             if method == 'argmax':
                 y_pred[np.argmax(probabilities)] = 1.0
@@ -399,10 +427,10 @@ def manual_accuracy_test(model_file, method = 'argmax'):
             if i > 0:
                 t.set_description(f"{i} {count/i}")
 
-def evaluate(model_file):
+def evaluate(model_file: str) -> None:
 
     # Load the model
-    model = tf.keras.models.load_model(model_file)
+    model = keras.models.load_model(model_file)
 
     names, vocab = import_names()
     if 'first' in model_file:
@@ -411,4 +439,5 @@ def evaluate(model_file):
         x, y, padding_value = build_training_set(names['lastnames'], vocab)
     
     model.evaluate(x,y)
+
 
