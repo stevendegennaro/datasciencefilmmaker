@@ -1,4 +1,10 @@
+#ADD:
+# Delete old jobs that aren't in new jobs
+# Calendar integration
+
+
 import pandas as pd
+import numpy as np
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -26,7 +32,14 @@ def send_message(message: str):
     with open("log.txt","a") as f:
         f.write(f"Text sent: {message.strip()}\n")
 
+# This function oes to the substitute assignment website, 
+# logs in, and downloads all currently available assinments
+# into a Pandas DataFrame. It then removes the assignments
+# that don't meet certain criteria. If the list contains
+# an assignment that it has not already seen (kept
+# in a running list in a file), it sends me a text message.
 def get_new_jobs():
+
     print("Retreiving jobs...")
     with open("info.txt","r") as f:
         info = json.load(f)
@@ -52,18 +65,26 @@ def get_new_jobs():
     table = wait.until(EC.presence_of_element_located((By.ID, "tableTable")))
     table_html = table.get_attribute("outerHTML")
     jobs = pd.read_html(io.StringIO(table_html))[0]
+    jobs['Job Start Date'] = pd.to_datetime(jobs['Job Start Date'])
+    jobs['Job End Date'] = pd.to_datetime(jobs['Job End Date'])
+
+    # Always include half-day assignments on M, W, F (0,2,4)
+    half_day = ((jobs['Job Start Date'].dt.dayofweek.isin([0,2,4])) & 
+               (jobs['Day Count'] == 1) & 
+               (pd.to_numeric(jobs['Times'].str.strip().str[-8:].str.strip().str[:1], \
+                        errors='coerce').fillna(100).astype(np.int64) < 2) &
+               (jobs['Role'].str.contains('High')))
 
     # Only at certain schools, 
     hs_list = info["hs_list"]
     substring_masks = [jobs['Organization'].str.contains(o) for o in hs_list]
-    combined_mask = pd.concat(substring_masks, axis=1).any(axis=1)
+    # combined_mask = pd.concat(substring_masks, axis=1).any(axis=1)
 
     # Only include jobs that are 2 days or fewer and for high schools
-    combined_mask = combined_mask & (jobs['Day Count']<=2) & (jobs['Role'].str.contains('High'))
+    combined_mask = half_day | (pd.concat(substring_masks, axis=1).any(axis=1) & (jobs['Day Count']<=2) & (jobs['Role'].str.contains('High')))
     filtered_jobs = jobs[combined_mask].copy()
-    filtered_jobs['Job Start Date'] = pd.to_datetime(filtered_jobs['Job Start Date'])
-    filtered_jobs['Job End Date'] = pd.to_datetime(filtered_jobs['Job End Date'])
     filtered_jobs.to_csv('filtered_jobs.csv')
+
 
     # Check if we already have an old jobs file
     if os.path.isfile('old_jobs.csv'):
@@ -73,7 +94,7 @@ def get_new_jobs():
         old_jobs = old_jobs[old_jobs['Job End Date'] >= pd.to_datetime(dt.datetime.now().date())]
     else:
         # Otherwise, create an empty data frame
-        old_jobs = pd.DataFrame(columns = filtered_jobs.columns)
+        old_jobs = pd.DataFrame(columns = filtered_jobs.columns).astype(filtered_jobs.dtypes.to_dict())
 
     # Check file for each job to see if we've already seen it
     new_jobs = filtered_jobs[~(filtered_jobs['Employee'].isin(old_jobs['Employee']) & \
@@ -86,7 +107,7 @@ def get_new_jobs():
     if len(new_jobs) > 0:
         # If there are new jobs, send me a text
         # Include date, day of the week, number of days, school, time, and Job Title
-        message = ""
+        message = f"{len(new_jobs)} new job{'s' if len(new_jobs) > 1 else ''}:\n"
         for _,row in new_jobs.iterrows():
             message += (f"{row['Job Start Date'].strftime('%A, %m/%d')}, " +
                   f"{row['Day Count']} day(s), " +
@@ -103,29 +124,24 @@ def get_new_jobs():
 
     return message
 
+# Open the browser in the background
+op = webdriver.ChromeOptions()
+op.add_argument('headless')
+driver = webdriver.Chrome(options=op)
 
 last_error = None
 s = 600      # Time to sleep between loops, in seconds
              # (defaults to 10 minutes, gets changed below
              # at certain times of day on certain days of the week
 
-# Open the browser in the background
-op = webdriver.ChromeOptions()
-op.add_argument('headless')
-driver = webdriver.Chrome(options=op)
-
 # Main Loop
 while True:
     now = dt.datetime.now()
-    # If it's a weekday evening between 3 and 7, or if it's Sunday night between 5 and 10,
+    # If it's a weekday evening between 6am and 10pm, or if it's Sunday night between 5 and 10,
     # Check every 2 minutes
-    if now.isoweekday() <= 5 and is_time_between(dt.time(15,0), dt.time(19,0), now.time()) | \
+    if now.isoweekday() <= 5 and is_time_between(dt.time(6,0), dt.time(22,0), now.time()) | \
        now.isoweekday() == 7 and is_time_between(dt.time(15,0), dt.time(22,0), now.time()):
         s = 120
-    # Otherwise, if it's a week day during the work day (6am to 3pm),
-    # Check every 5 minutes
-    elif now.isoweekday() <= 5 and is_time_between(dt.time(6,0), dt.time(15,0), now.time()):
-        s = 300
 
     try:
         message = get_new_jobs()
@@ -145,5 +161,8 @@ while True:
             # send a notification about the exception
             send_message(f"System down with error {str(e)[:100]} at {dt.datetime.now()}")
             last_error = e
-
-    time.sleep(s)
+            
+    if last_error:
+        time.sleep(60)
+    else:
+        time.sleep(s)
