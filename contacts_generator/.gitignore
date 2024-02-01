@@ -1,3 +1,11 @@
 data/Contacts/
 __pycache__/
 weights/
+tfweights/companies_RNN_128.history
+tfweights/companies_RNN_128.history.11.history
+tfweights/companies_RNN_128.history.31.history
+tfweights/companies_RNN_128.keras
+tfweights/companies_RNN_128.keras.11.keras
+tfweights/generated_names.txt
+tfweights/num_possibles.txt
+tfweights/set_dict.json

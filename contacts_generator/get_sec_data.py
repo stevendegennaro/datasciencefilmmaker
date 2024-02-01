@@ -17,8 +17,7 @@ def get_companies_by_exchange(exchange):
     else:
         return None
 
-# Example usage
-nasdaq_companies = get_companies_by_exchange(nasdaq)
+nasdaq_companies = get_companies_by_exchange('nasdaq')
 nyse_companies = get_companies_by_exchange('nyse')
 
 filename = 'nyse.json'
