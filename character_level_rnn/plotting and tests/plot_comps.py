@@ -6,7 +6,7 @@ from collections import Counter
 import json
 from player import Player
 
-def import_names(namesfile: str = "data/all_names.json"):
+def import_names(namesfile: str = "../data/all_names.json"):
     # Define the start and end characters of every name
     global START, STOP
     START = "^"
@@ -458,6 +458,8 @@ def generation_time_native():
     fig, ax = plt.subplots(layout='constrained')
 
     for attribute, measurement in accuracy.items():
+        print(attribute)
+        print(measurement)
         offset = width * multiplier
         rects = ax.bar(x + offset, measurement, width, label=attribute)
         ax.bar_label(rects, padding=3)
@@ -642,6 +644,41 @@ def generated_frequency_test(duplicates: dict):
     fig.suptitle("Frequency Comparison of First Names\nin Generated List vs Original")
     plt.show()
 
+def average_name_lengths():
+    firstnames, lastnames, _ = import_names()
+    fn_len = pd.Series([name[1:-1] for name in firstnames]).apply(len)
+    ln_len = pd.Series([name[1:-1] for name in lastnames]).apply(len)
+
+    which = ("Mean", "Median")
+    length = {
+        'First Names': (fn_len.mean(), fn_len.median()),
+        'Last Names': (ln_len.mean(), ln_len.median()),
+        'Company Names': (24.61624087591241, 23.0)
+    }
+
+    x = np.arange(len(which))  # the label locations
+    width = 0.25  # the width of the bars
+    multiplier = 0
+
+    fig, ax = plt.subplots(layout='constrained')
+
+    for attribute, measurement in length.items():
+        offset = width * multiplier
+        rects = ax.bar(x + offset, measurement, width, label=attribute)
+        ax.bar_label(rects, padding=3)
+        multiplier += 1
+
+    # Add some text for labels, title and custom x-axis tick labels, etc.
+    ax.set_ylabel('Average Length')
+    ax.set_title('Mean and Median Length\n' +
+                 'of Names in Training Data Sets')
+    ax.set_xticks(x + width, which)
+    ax.legend(loc='upper right', ncols=1)
+    ax.set_ylim(0, 35)
+
+    plt.show()
+# generation_time_native()
+average_name_lengths()
 # longtail_frequency()
 # momentum_plot()
 # learning_rate_plot()
