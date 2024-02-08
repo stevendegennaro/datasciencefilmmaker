@@ -213,7 +213,6 @@ def generate(model: keras.models, vocab: Vocabulary) -> str:
     # Encode the starting character
     for t in range(1,maxlen):
         # Generate the next character
-
         probabilities = model.predict(x, verbose=0)[0]
         next_letter = vocab.i2w[np.random.choice(len(probabilities),p=probabilities)]
         string += next_letter
