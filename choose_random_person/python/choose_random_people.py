@@ -5,6 +5,7 @@ from shapely.geometry import Polygon, Point, shape
 import matplotlib.pyplot as plt
 import json
 import sys
+import os
 
 # Function to randomly choose a latitude and longitude within a given ploygon
 def get_random_location(polygon: Polygon) -> Point:
@@ -62,16 +63,24 @@ def get_random_people(n_samples:int = 25) -> pd.DataFrame:
         sample.loc[index,'location'] = get_random_location(polygon)
     return sample
 
-# Plots the location of a random person
+# Plots the location of a person
 def plot_location(person: pd.DataFrame, ax: plt.Axes,color="black") -> None:
     x,y = person['polygon'].exterior.xy
     ax.plot(x,y,color=color)
     ax.plot(person['location'].x,person['location'].y,marker="+",color=color)
 
+def get_radius():
+    return np.random.normal(1200,100)
+
 # main function to create the final file that I need, which is a list of 
 # 100 randomly-drawn locations in the U.S. weighted by population
 # output in json format so they can be plotted by the Google Maps API
-def create_cameras_json(n_samples: int = 100):
+def create_cameras_json(filename: str, n_samples: int = 100):
+
+    if os.path.isfile(filename):
+        print(f'File "{filename}" already exists. Exiting.')
+        return
+
     load_lookup()
     cameras = get_random_people(n_samples)
     cameras_dict_list = []
@@ -79,12 +88,22 @@ def create_cameras_json(n_samples: int = 100):
         try:
             cameras_dict_list.append({'lat':row['location'].y,
                                       'lng':row['location'].x,
-                                      'radius':np.random.normal(1200,100)})
+                                      'radius':get_radius()})
         except:
             print(row)
             sys.exit()
-    with open('../html and javascript/camera_list.json','w') as f:
-        json.dump(cameras_dict_list,f)
+
+    with open(filename,'w') as f:
+        f.write("[\n")
+        for row in cameras_dict_list:
+            f.write("\t")
+            json.dump(row, f)
+            f.write(",\n")
+        f.write("]")
+
+
+
+
 
 ###########################
 #### Testing Functions ####
