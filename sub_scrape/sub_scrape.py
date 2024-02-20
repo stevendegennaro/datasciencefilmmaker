@@ -46,26 +46,32 @@ def get_accepted_jobs():
         set eventsList to eventsList as string
     end tell
     '''
+    try:
+        result = subprocess.run(['osascript', '-e', applescript_code], capture_output=True, text=True)
+        output = result.stdout.strip()
+        jobs = output.split("\n")
+        jobs = [job.split("-") for job in jobs]
+        date_format = '%A, %B %d, %Y at %I:%M:%S %p'
 
-    result = subprocess.run(['osascript', '-e', applescript_code], capture_output=True, text=True)
-    output = result.stdout.strip()
-    jobs = output.split("\n")
-    jobs = [job.split("-") for job in jobs]
-    date_format = '%A, %B %d, %Y at %I:%M:%S %p'
-    for j, job in enumerate(jobs):
-        jobs[j][0] = dt.datetime.strptime(job[0], date_format).date()
-        if job[1] == 'missing value':
-            jobs[j][1] = jobs[j][0]
-        else:
-            jobs[j][1] = dt.datetime.strptime(job[1].split("UNTIL=")[1][:8],'%Y%m%d').date()
-    accepted_dates = []
-    for job in jobs:
-        date = job[0]
-        while date <= job[1]: 
-            accepted_dates.append(date)
-            date += dt.timedelta(days=1)
+        for j, job in enumerate(jobs):
+            jobs[j][0] = dt.datetime.strptime(job[0], date_format).date()
+            if job[1] == 'missing value':
+                jobs[j][1] = jobs[j][0]
+            else:
+                jobs[j][1] = dt.datetime.strptime(job[1].split("UNTIL=")[1][:8],'%Y%m%d').date()
+        accepted_dates = []
+        for job in jobs:
+            date = job[0]
+            while date <= job[1]: 
+                accepted_dates.append(date)
+                date += dt.timedelta(days=1)
 
-    accepted_dates = sorted(list(set(accepted_dates)))
+        accepted_dates = sorted(list(set(accepted_dates)))
+    except Exception as e:
+        print('Error getting calendar events')
+        with open("log.txt","a") as f:
+            f.write('Error getting calendar events\n')
+        accepted_dates = []
     return accepted_dates
 
 # This function oes to the substitute assignment website, 
@@ -101,28 +107,33 @@ def get_new_jobs():
     table = wait.until(EC.presence_of_element_located((By.ID, "tableTable")))
     table_html = table.get_attribute("outerHTML")
     jobs = pd.read_html(io.StringIO(table_html))[0]
+
+    # Convert dates and times
     jobs['Job Start Date'] = pd.to_datetime(jobs['Job Start Date'])
     jobs['Job End Date'] = pd.to_datetime(jobs['Job End Date'])
+    jobs[['Start Time','End Time']] = jobs['Times'].str.strip().str.split("-",expand=True)
+    jobs["Start Time"] = pd.to_datetime(jobs["Start Time"].str.strip(),format = "%I:%M %p")
+    jobs["Start Time"] = pd.to_numeric(jobs["Start Time"].dt.strftime("%H"))
+    jobs["End Time"] = pd.to_datetime(jobs["End Time"].str.strip(),format = "%I:%M %p")
+    jobs["End Time"] = pd.to_numeric(jobs["End Time"].dt.strftime("%H"))
+
+    # High schools only
+    jobs = jobs[jobs['Role'].str.contains('High')]
 
     # Always include half-day assignments on M, W, F (0,2,4)
-    half_day = ((jobs['Job Start Date'].dt.dayofweek.isin([0,2,4])) & 
-               (jobs['Day Count'] == 1) & 
-               (pd.to_numeric(jobs['Times'].str.strip().str[-8:].str.strip().str[:1], \
-                        errors='coerce').fillna(100).astype(np.int64) < 2) &
-               (jobs['Role'].str.contains('High')))
+    half_day = (
+                    (jobs['Job Start Date'].dt.dayofweek.isin([0,2,4])) & 
+                    (jobs['Day Count'] == 1) & 
+                    (jobs["End Time"] < 14)
+               )
 
     # Don't inlcude jobs that are only afternoon jobs
-    afternoon_only = (
-                        (pd.to_numeric(jobs['Times'].str.strip().str.split(":").str[0], errors='coerce').fillna(5) >= 11) |
-                        (pd.to_numeric(jobs['Times'].str.strip().str.split(":").str[0], errors='coerce').fillna(5) < 6)
-                     )
+    afternoon_only = jobs["End Time"]
     # Don't include all day jobs on M and W
     mw_all_day = (
                     (jobs['Job Start Date'].dt.dayofweek.isin([0,2])) & 
-                    (pd.to_numeric(jobs['Times'].str.strip().str[-8:].str.strip().str[:1], \
-                        errors='coerce').fillna(100).astype(np.int64) > 2)
+                    (jobs["End Time"] > 14)
                  )
-
 
     # Only at certain schools, 
     hs_list = info["hs_list"]
@@ -135,26 +146,31 @@ def get_new_jobs():
                             pd.concat(hs_masks, axis=1).any(axis=1) & 
                             (~afternoon_only) &
                             (~mw_all_day) &
-                            # Only include jobs that are 2 days or fewer and for high schools
-                            (jobs['Day Count'] <= 2) & (jobs['Role'].str.contains('High')) & 
+                            # Only include jobs that are 2 days or fewer
+                            (jobs['Day Count'] <= 2) &
                             # Only include jobs that are in the next 30 days
-                            ((jobs["Job Start Date"]-today).dt.days < 30)
+                            ((jobs["Job Start Date"] - dt.datetime.today()).dt.days < 30)
                         )
                     )
     filtered_jobs = jobs[combined_mask].copy()
+    filtered_jobs = filtered_jobs.drop(['Start Time','End Time'],axis=1)
     filtered_jobs.to_csv('filtered_jobs.csv', index=False)
 
     # Check if we already have an old jobs file
     if os.path.isfile('old_jobs.csv'):
         # Read it in
         old_jobs = pd.read_csv('old_jobs.csv',parse_dates = ['Job Start Date','Job End Date'])
-        # Get rid of anything that ended before today
-        old_jobs = old_jobs[old_jobs['Job End Date'] >= pd.to_datetime(dt.datetime.now().date())]
-        # Get rid of anything that's not in our new list
-        # (i.e., the job has been deleted or claimed by someone else)
-        old_jobs = old_jobs.merge(filtered_jobs, how='left', indicator=True)
-        old_jobs = old_jobs[old_jobs['_merge'] == 'both']
-        old_jobs.drop(columns='_merge',inplace = True)
+        if not old_jobs.empty:
+            # Get rid of anything that ended before today
+            old_jobs = old_jobs[old_jobs['Job End Date'] >= pd.to_datetime(dt.datetime.now().date())]
+            # Get rid of anything that's not in our new list
+            # (i.e., the job has been deleted or claimed by someone else)
+            old_jobs = old_jobs.merge(filtered_jobs, how='left', indicator=True)
+            old_jobs = old_jobs[old_jobs['_merge'] == 'both']
+            old_jobs.drop(columns='_merge',inplace = True)
+        else:
+            # Otherwise, create an empty data frame
+            old_jobs = pd.DataFrame(columns = filtered_jobs.columns).astype(filtered_jobs.dtypes.to_dict())
 
     else:
         # Otherwise, create an empty data frame
@@ -211,24 +227,24 @@ while True:
        now.isoweekday() == 7 and is_time_between(dt.time(15,0), dt.time(22,0), now.time()):
         s = 120
 
-    # try:
-    message = get_new_jobs()
-    if message: send_message(message)
+    try:
+        message = get_new_jobs()
+        if message: send_message(message)
 
-    # If we've made it this far, it means there are no new exceptions
-    if last_error:
-        send_message(f"Code has resumed at {dt.datetime.now()}")
-        last_error = None
+        # If we've made it this far, it means there are no new exceptions
+        if last_error:
+            send_message(f"Code has resumed at {dt.datetime.now()}")
+            last_error = None
 
-    # except Exception as e:
-    #     print(e)
-    #     with open("log.txt","a") as f:
-    #         f.write(str(e)+"\n")
-    #     # If this isn't just a repeat of the last exception, then
-    #     if type(e) is not type(last_error) or e.args != last_error.args:
-    #         # send a notification about the exception
-    #         send_message(f"System down with error {str(e)[:100]} at {dt.datetime.now()}")
-    #         last_error = e
+    except Exception as e:
+        print(e)
+        with open("log.txt","a") as f:
+            f.write(str(e)+"\n")
+        # If this isn't just a repeat of the last exception, then
+        if type(e) is not type(last_error) or e.args != last_error.args:
+            # send a notification about the exception
+            send_message(f"System down with error {str(e)[:100]} at {dt.datetime.now()}")
+            last_error = e
             
     if last_error:
         time.sleep(60)
