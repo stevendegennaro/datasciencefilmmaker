@@ -1,7 +1,3 @@
-#ADD:
-# Delete old jobs that aren't in new jobs
-# Calendar integration
-
 import subprocess
 import pandas as pd
 import numpy as np
@@ -128,7 +124,7 @@ def get_new_jobs():
                )
 
     # Don't inlcude jobs that are only afternoon jobs
-    afternoon_only = jobs["End Time"]
+    afternoon_only = jobs["Start Time"] > 10
     # Don't include all day jobs on M and W
     mw_all_day = (
                     (jobs['Job Start Date'].dt.dayofweek.isin([0,2])) & 
