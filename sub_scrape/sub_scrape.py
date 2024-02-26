@@ -10,6 +10,7 @@ import os
 import datetime as dt
 import io
 import json
+import sys
 
 def is_time_between(begin_time, end_time, check_time):
     # If check time is not given, default to current UTC time
@@ -28,6 +29,11 @@ def send_message(message: str):
     with open("log.txt","a") as f:
         f.write(f"Text sent: {message.strip()}\n")
 
+
+### Calls the Apple Calendar app to get a list
+### of days on which I already have a job. 
+### Returns a list of dates. If there is an exception
+### it returns an empty list
 def get_accepted_jobs():
     print("Checking calendar...")
     applescript_code = '''
@@ -70,7 +76,10 @@ def get_accepted_jobs():
         accepted_dates = []
     return accepted_dates
 
-# This function oes to the substitute assignment website, 
+
+
+
+# This function goes to the substitute assignment website, 
 # logs in, and downloads all currently available assinments
 # into a Pandas DataFrame. It then removes the assignments
 # that don't meet certain criteria. If the list contains
@@ -78,10 +87,14 @@ def get_accepted_jobs():
 # in a running list in a file), it sends me a text message.
 def get_new_jobs():
 
-    print("Retreiving jobs...")
+    print("Retrieving jobs...")
     with open("info.txt","r") as f:
         info = json.load(f)
 
+    ##################################################################
+    ### Get the web page and download the currently available jobs ###
+    ##################################################################
+ 
     # Open the web page
     driver.get(info["url"])
 
@@ -103,6 +116,7 @@ def get_new_jobs():
     table = wait.until(EC.presence_of_element_located((By.ID, "tableTable")))
     table_html = table.get_attribute("outerHTML")
     jobs = pd.read_html(io.StringIO(table_html))[0]
+    now = dt.datetime.today()
 
     # Convert dates and times
     jobs['Job Start Date'] = pd.to_datetime(jobs['Job Start Date'])
@@ -112,28 +126,70 @@ def get_new_jobs():
     jobs["Start Time"] = pd.to_numeric(jobs["Start Time"].dt.strftime("%H"))
     jobs["End Time"] = pd.to_datetime(jobs["End Time"].str.strip(),format = "%I:%M %p")
     jobs["End Time"] = pd.to_numeric(jobs["End Time"].dt.strftime("%H"))
+    jobs['Download Time'] = now
+    jobs['Unavailable Time'] = pd.NaT
 
     # High schools only
     jobs = jobs[jobs['Role'].str.contains('High')]
 
+    #################################################################
+    ### Take the list of jobs just downloaded                     ###
+    ### from the website and compare it against a list of         ###
+    ### every job we've already seen. Jobs that it hasn't seen    ###
+    ### before are put into 'new_jobs'. If a previously available ###
+    ### job is no longer available, it records the time and then  ###
+    ### re-outputs the old jobs list.                             ###
+    #################################################################
+    old_jobs = pd.read_csv('old_jobs.csv',
+                            parse_dates = ['Job Start Date',
+                                           'Job End Date',
+                                           'Download Time',
+                                           'Unavailable Time'])
+
+    # Get rid of old_jobs that we've already recorded an Unavailable Time for
+    check_jobs = old_jobs[old_jobs['Unavailable Time'].isnull()]
+    # Compare the two lists to see:
+    left = check_jobs.drop(['Download Time','Unavailable Time'], axis=1)
+    right = jobs.drop(['Download Time','Unavailable Time'], axis=1)
+    # which jobs that used to be there are now gone
+    unavailable = left.merge(right, how='left', indicator=True).set_axis(check_jobs.index)
+    unavailable = unavailable['_merge'] == 'left_only'
+    # which jobs that weren't there before are there now
+    new = left.merge(right, how='right', indicator=True).set_axis(jobs.index)
+    new = new['_merge'] == 'right_only'
+
+    # If a job is now gone, set its end time to now
+    check_jobs.loc[unavailable,'Unavailable Time'] = now
+    # Find the new jobs
+    new_jobs = jobs[new]
+    # Add the new jobs to the old jobs and output
+    old_jobs = pd.concat([old_jobs[~old_jobs['Unavailable Time'].isnull()],check_jobs,new_jobs])
+    old_jobs.to_csv('old_jobs.csv',index = False)
+
+    ###############################################
+    ### Filter the jobs to only the ones that I ###
+    ### would be interested in taking           ###
+    ###############################################
+
     # Always include half-day assignments on M, W, F (0,2,4)
     half_day = (
-                    (jobs['Job Start Date'].dt.dayofweek.isin([0,2,4])) & 
-                    (jobs['Day Count'] == 1) & 
-                    (jobs["End Time"] < 14)
+                    (new_jobs['Job Start Date'].dt.dayofweek.isin([0,2,4])) & 
+                    (new_jobs['Day Count'] == 1) & 
+                    (new_jobs["End Time"] < 14)
                )
 
     # Don't inlcude jobs that are only afternoon jobs
-    afternoon_only = jobs["Start Time"] > 10
+    afternoon_only = new_jobs["Start Time"] > 10
+
     # Don't include all day jobs on M and W
     mw_all_day = (
-                    (jobs['Job Start Date'].dt.dayofweek.isin([0,2])) & 
-                    (jobs["End Time"] > 14)
+                    (new_jobs['Job Start Date'].dt.dayofweek.isin([0,2])) & 
+                    (new_jobs["End Time"] > 14)
                  )
 
     # Only at certain schools, 
     hs_list = info["hs_list"]
-    hs_masks = [jobs['Organization'].str.contains(o) for o in hs_list]
+    hs_masks = [new_jobs['Organization'].str.contains(o) for o in hs_list]
 
     # Put all the masks together
     combined_mask = (
@@ -143,52 +199,30 @@ def get_new_jobs():
                             (~afternoon_only) &
                             (~mw_all_day) &
                             # Only include jobs that are 2 days or fewer
-                            (jobs['Day Count'] <= 2) &
+                            (new_jobs['Day Count'] <= 2) &
                             # Only include jobs that are in the next 30 days
-                            ((jobs["Job Start Date"] - dt.datetime.today()).dt.days < 30)
+                            ((new_jobs["Job Start Date"] - dt.datetime.today()).dt.days < 30)
                         )
                     )
-    filtered_jobs = jobs[combined_mask].copy()
-    filtered_jobs = filtered_jobs.drop(['Start Time','End Time'],axis=1)
-    filtered_jobs.to_csv('filtered_jobs.csv', index=False)
+    filtered_jobs = new_jobs[combined_mask].copy()
 
-    # Check if we already have an old jobs file
-    if os.path.isfile('old_jobs.csv'):
-        # Read it in
-        old_jobs = pd.read_csv('old_jobs.csv',parse_dates = ['Job Start Date','Job End Date'])
-        if not old_jobs.empty:
-            # Get rid of anything that ended before today
-            old_jobs = old_jobs[old_jobs['Job End Date'] >= pd.to_datetime(dt.datetime.now().date())]
-            # Get rid of anything that's not in our new list
-            # (i.e., the job has been deleted or claimed by someone else)
-            old_jobs = old_jobs.merge(filtered_jobs, how='left', indicator=True)
-            old_jobs = old_jobs[old_jobs['_merge'] == 'both']
-            old_jobs.drop(columns='_merge',inplace = True)
-        else:
-            # Otherwise, create an empty data frame
-            old_jobs = pd.DataFrame(columns = filtered_jobs.columns).astype(filtered_jobs.dtypes.to_dict())
-
-    else:
-        # Otherwise, create an empty data frame
-        old_jobs = pd.DataFrame(columns = filtered_jobs.columns).astype(filtered_jobs.dtypes.to_dict())
-
-    # Check file for each job to see if we've already seen it
-    new_jobs = filtered_jobs[~(filtered_jobs['Employee'].isin(old_jobs['Employee']) & \
-                             filtered_jobs['Job Start Date'].isin(old_jobs['Job Start Date']))]
+    ############################
+    ### Calendar integration ###
+    ############################
 
     # Remove jobs on days I already have a job
     accepted_jobs = get_accepted_jobs()
-    new_jobs = new_jobs[~new_jobs['Job Start Date'].dt.date.isin(accepted_jobs)]
+    filtered_jobs = filtered_jobs[~filtered_jobs['Job Start Date'].dt.date.isin(accepted_jobs)]
 
-    # Output jobs list for comparison next time through the loop
-    old_jobs = pd.concat([old_jobs,new_jobs])
-    old_jobs.to_csv('old_jobs.csv',index=False)
+    ###########################################
+    ### Create messge if there are new jobs ###
+    ###########################################
 
-    if len(new_jobs) > 0:
+    if len(filtered_jobs) > 0:
         # If there are new jobs, send me a text
         # Include date, day of the week, number of days, school, time, and Job Title
-        message = f"{len(new_jobs)} new job{'s' if len(new_jobs) > 1 else ''}:\n"
-        for _,row in new_jobs.iterrows():
+        message = f"{len(filtered_jobs)} new job{'s' if len(filtered_jobs) > 1 else ''}:\n"
+        for _,row in filtered_jobs.iterrows():
             message += (f"{row['Job Start Date'].strftime('%A, %m/%d')}, " +
                         f"{row['Day Count']} day(s), " +
                         f"{row['Times']}, " +
@@ -204,6 +238,10 @@ def get_new_jobs():
 
     return message
 
+##############
+###  Main  ###
+##############
+
 # Open the browser in the background
 op = webdriver.ChromeOptions()
 op.add_argument('headless')
@@ -216,6 +254,15 @@ s = 600      # Time to sleep between loops, in seconds
 
 # Main Loop
 while True:
+
+    if os.path.isfile('pause.txt'):
+        while os.path.isfile('pause.txt'):
+            time.sleep(60)
+
+    if os.path.isfile('stop.txt'):
+        print("Stop file found. Exiting...")
+        sys.exit()
+
     now = dt.datetime.now()
     # If it's a weekday evening between 6am and 10pm, or if it's Sunday night between 5 and 10,
     # Check every 2 minutes
@@ -225,7 +272,8 @@ while True:
 
     try:
         message = get_new_jobs()
-        if message: send_message(message)
+        # if message: send_message(message)
+        if message: print(message)
 
         # If we've made it this far, it means there are no new exceptions
         if last_error:
