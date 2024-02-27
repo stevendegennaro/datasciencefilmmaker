@@ -116,7 +116,7 @@ def get_new_jobs():
     table = wait.until(EC.presence_of_element_located((By.ID, "tableTable")))
     table_html = table.get_attribute("outerHTML")
     jobs = pd.read_html(io.StringIO(table_html))[0]
-    now = dt.datetime.today()
+    now = np.datetime64(dt.datetime.today()).astype('datetime64[ns]')
 
     # Convert dates and times
     jobs['Job Start Date'] = pd.to_datetime(jobs['Job Start Date'])
@@ -162,8 +162,10 @@ def get_new_jobs():
     check_jobs.loc[unavailable,'Unavailable Time'] = now
     # Find the new jobs
     new_jobs = jobs[new]
-    # Add the new jobs to the old jobs and output
-    old_jobs = pd.concat([old_jobs[~old_jobs['Unavailable Time'].isnull()],check_jobs,new_jobs])
+    # Add the new jobs to the old jobs and jobs that are newly unavailable
+    old_jobs = old_jobs[~old_jobs['Unavailable Time'].isnull()] 
+    old_jobs = pd.concat([old_jobs,check_jobs,new_jobs])
+    # Output the result
     old_jobs.to_csv('old_jobs.csv',index = False)
 
     ###############################################
