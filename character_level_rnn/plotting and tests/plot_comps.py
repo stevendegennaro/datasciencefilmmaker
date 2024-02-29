@@ -507,7 +507,7 @@ def generation_time_eager_disabled():
                  'With Eager Execution Disabled')
     ax.set_xticks(x + 2*width, which)
     ax.legend(loc='upper left', ncols=1)
-    ax.set_ylim(0, max(scratch + keras_32 + keras_128 + lstm)+500)
+    ax.set_ylim(0, max(scratch + keras_32 + keras_128 + lstm)+50)
 
     plt.show()
 
@@ -678,7 +678,7 @@ def average_name_lengths():
 
     plt.show()
 # generation_time_native()
-average_name_lengths()
+# average_name_lengths()
 # longtail_frequency()
 # momentum_plot()
 # learning_rate_plot()
