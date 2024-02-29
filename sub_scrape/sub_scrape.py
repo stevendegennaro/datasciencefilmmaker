@@ -5,75 +5,68 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-import time
+import time # Used for time.sleep()
 import os
 import datetime as dt
 import io
 import json
 import sys
+import traceback
 
-def is_time_between(begin_time, end_time, check_time):
-    # If check time is not given, default to current UTC time
+def is_time_between(begin_time:dt.datetime, end_time, check_time):
+    '''
+    Takes two datetime.time objects and checks if a
+    third object falls between them.
+    '''
     if begin_time < end_time:
         return check_time >= begin_time and check_time <= end_time
     else: # crosses midnight
         return check_time >= begin_time or check_time <= end_time
 
-def send_message(message: str):
-    message = message.replace("'","").replace("\"","")
-    message = f"\"{message}\""
-    os.system(f"osascript sendMessage.applescript {info['phone_number']} {message}")
-    print("Text sent: ",message.strip())
-    with open("log.txt","a") as f:
-        f.write(f"Text sent: {message.strip()}\n")
-
-def get_accepted_jobs()-> list:
+def get_current_available_jobs() -> pd.DataFrame:
     '''
-    Calls the Apple Calendar app to get a list
-    of days on which I already have a job. 
-    Returns a list of dates. If there is an exception
-    it returns an empty list
+    Goes to the substitute assignment website, logs in, 
+    and downloads all currently available assinments.
+    Returns the result as a pandas DataFrame
     '''
-    print("Checking calendar...")
-    applescript_code = '''
-    tell application "Calendar"
-        set calendarEvents to every event of calendar "Sub"
-        set eventsList to {}
-        repeat with anEvent in calendarEvents
-            set eventStartDate to start date of anEvent as string
-            set eventRecurrence to recurrence of anEvent as string
-            set eventsList to eventsList & {eventStartDate & "-" & eventRecurrence & "\n"}
-        end repeat
-        set eventsList to eventsList as string
-    end tell
-    '''
-    try:
-        result = subprocess.run(['osascript', '-e', applescript_code], capture_output=True, text=True)
-        output = result.stdout.strip()
-        jobs = output.split("\n")
-        jobs = [job.split("-") for job in jobs]
-        date_format = '%A, %B %d, %Y at %I:%M:%S %p'
+    print("Retrieving current jobs...")
+ 
+    # Open the web page
+    driver.get(info["url"])
 
-        for j, job in enumerate(jobs):
-            jobs[j][0] = dt.datetime.strptime(job[0], date_format).date()
-            if job[1] == 'missing value':
-                jobs[j][1] = jobs[j][0]
-            else:
-                jobs[j][1] = dt.datetime.strptime(job[1].split("UNTIL=")[1][:8],'%Y%m%d').date()
-        accepted_dates = []
-        for job in jobs:
-            date = job[0]
-            while date <= job[1]: 
-                accepted_dates.append(date)
-                date += dt.timedelta(days=1)
+    # Enter ssn and password and click Sign On button
+    ssn_element = driver.find_element(By.ID,"last4ofSSN")
+    ssn_element.send_keys(info["last4ofSSN"])
+    pin_element = driver.find_element(By.ID,"pin")
+    pin_element.send_keys(info["pin"])
+    button = driver.find_element(By.ID,"ok")
+    button.click()
 
-        accepted_dates = sorted(list(set(accepted_dates)))
-    except Exception as e:
-        print('Error getting calendar events')
-        with open("log.txt","a") as f:
-            f.write('Error getting calendar events\n')
-        accepted_dates = []
-    return accepted_dates
+    # Wait for the page to load, then click "Search for Jobs"
+    wait = WebDriverWait(driver, 10)
+    link = wait.until(EC.presence_of_element_located((By.ID, "subNav-jobSearch")))
+    link.click()
+
+    # Wait for the table of available jobs to load, then put into a data frame
+    wait = WebDriverWait(driver, 10)
+    table = wait.until(EC.presence_of_element_located((By.ID, "tableTable")))
+    table_html = table.get_attribute("outerHTML")
+    jobs = pd.read_html(io.StringIO(table_html))[0]
+    now = np.datetime64(dt.datetime.today()).astype('datetime64[ns]')
+
+    # Convert dates and times
+    jobs['Job Start Date'] = pd.to_datetime(jobs['Job Start Date'])
+    jobs['Job End Date'] = pd.to_datetime(jobs['Job End Date'])
+    jobs[['Start Time','End Time']] = jobs['Times'].str.strip().str.split("-",expand=True)
+    jobs["Start Time"] = pd.to_datetime(jobs["Start Time"].str.strip(),format = "%I:%M %p")
+    jobs["Start Time"] = pd.to_numeric(jobs["Start Time"].dt.strftime("%H"))
+    jobs["End Time"] = pd.to_datetime(jobs["End Time"].str.strip(),format = "%I:%M %p")
+    jobs["End Time"] = pd.to_numeric(jobs["End Time"].dt.strftime("%H"))
+    jobs['Download Time'] = now
+    jobs['Unavailable Time'] = pd.NaT
+    jobs.drop_duplicates(inplace = True)
+
+    return jobs
 
 def archive_jobs_and_return_new(jobs: pd.DataFrame) -> pd.DataFrame:
     '''
@@ -112,12 +105,60 @@ def archive_jobs_and_return_new(jobs: pd.DataFrame) -> pd.DataFrame:
     old_jobs = old_jobs[~old_jobs['Unavailable Time'].isnull()] 
     old_jobs = pd.concat([old_jobs,check_jobs,new_jobs])
     # Output the result
-######## Sort them by job date ########
+    old_jobs.sort_values(by=['Job Start Date'])
     old_jobs.to_csv('old_jobs.csv',index = False)
     backup_file = 'old_jobs_backups/old_jobs_backup_' + pd.to_datetime(now).strftime('%Y_%m_%d') + '.csv'
     old_jobs.to_csv(backup_file,index = False)
 
     return new_jobs
+
+def get_my_scheduled_jobs()-> list:
+    '''
+    Calls the Apple Calendar app to get a list
+    of days on which I already have a job. 
+    Returns a list of dates. If there is an exception
+    it returns an empty list
+    '''
+    print("Checking calendar...")
+    applescript_code = '''
+    tell application "Calendar"
+        set calendarEvents to every event of calendar "Sub"
+        set eventsList to {}
+        repeat with anEvent in calendarEvents
+            set eventStartDate to start date of anEvent as string
+            set eventRecurrence to recurrence of anEvent as string
+            set eventsList to eventsList & {eventStartDate & "-" & eventRecurrence & "\n"}
+        end repeat
+        set eventsList to eventsList as string
+    end tell
+    '''
+    try:
+        result = subprocess.run(['osascript', '-e', applescript_code], capture_output=True, text=True)
+        output = result.stdout.strip()
+        jobs = output.split("\n")
+        jobs = [job.split("-") for job in jobs]
+        date_format = '%A, %B %d, %Y at %I:%M:%S %p'
+
+        for j, job in enumerate(jobs):
+            jobs[j][0] = dt.datetime.strptime(job[0], date_format).date()
+            if job[1] == 'missing value':
+                jobs[j][1] = jobs[j][0]
+            else:
+                jobs[j][1] = dt.datetime.strptime(job[1].split("UNTIL=")[1][:8],'%Y%m%d').date()
+        my_scehduled_jobs = []
+        for job in jobs:
+            date = job[0]
+            while date <= job[1]: 
+                my_scehduled_jobs.append(date)
+                date += dt.timedelta(days=1)
+
+        my_scehduled_jobs = sorted(list(set(my_scehduled_jobs)))
+    except Exception as e:
+        print('Error getting calendar events')
+        with open("log.txt","a") as f:
+            f.write('Error getting calendar events\n')
+        my_scehduled_jobs = []
+    return my_scehduled_jobs
 
 def filter_jobs(new_jobs:pd.DataFrame) -> pd.DataFrame:
     '''
@@ -171,8 +212,8 @@ def filter_jobs(new_jobs:pd.DataFrame) -> pd.DataFrame:
 
     # Remove jobs on days that I already have a job
     if len(filtered_jobs) > 0:
-        accepted_jobs = get_accepted_jobs()
-        filtered_jobs = filtered_jobs[~filtered_jobs['Job Start Date'].dt.date.isin(accepted_jobs)]
+        my_scehduled_jobs = get_my_scheduled_jobs()
+        filtered_jobs = filtered_jobs[~filtered_jobs['Job Start Date'].dt.date.isin(my_scehduled_jobs)]
 
     return filtered_jobs
 
@@ -203,51 +244,18 @@ def create_message(filtered_jobs:pd.DataFrame) -> str:
 
     return message
 
-
-def get_current_jobs() -> pd.DataFrame:
+def send_message(message: str) -> None:
     '''
-    Goes to the substitute assignment website, logs in, 
-    and downloads all currently available assinments.
-    Returns the result as a pandas DataFrame
+    Calls applescript to send a message to my phone.
+    Global variable 'info' is created in main
     '''
-    print("Retrieving current jobs...")
- 
-    # Open the web page
-    driver.get(info["url"])
+    message = message.replace("'","").replace("\"","")
+    message = f"\"{message}\""
+    os.system(f"osascript sendMessage.applescript {info['phone_number']} {message}")
+    print("Text sent: ",message.strip())
+    with open("log.txt","a") as f:
+        f.write(f"Text sent: {message.strip()}\n")
 
-    # Enter ssn and password and click Sign On button
-    ssn_element = driver.find_element(By.ID,"last4ofSSN")
-    ssn_element.send_keys(info["last4ofSSN"])
-    pin_element = driver.find_element(By.ID,"pin")
-    pin_element.send_keys(info["pin"])
-    button = driver.find_element(By.ID,"ok")
-    button.click()
-
-    # Wait for the page to load, then click "Search for Jobs"
-    wait = WebDriverWait(driver, 10)
-    link = wait.until(EC.presence_of_element_located((By.ID, "subNav-jobSearch")))
-    link.click()
-
-    # Wait for the table of available jobs to load, then put into a data frame
-    wait = WebDriverWait(driver, 10)
-    table = wait.until(EC.presence_of_element_located((By.ID, "tableTable")))
-    table_html = table.get_attribute("outerHTML")
-    jobs = pd.read_html(io.StringIO(table_html))[0]
-    now = np.datetime64(dt.datetime.today()).astype('datetime64[ns]')
-
-    # Convert dates and times
-    jobs['Job Start Date'] = pd.to_datetime(jobs['Job Start Date'])
-    jobs['Job End Date'] = pd.to_datetime(jobs['Job End Date'])
-    jobs[['Start Time','End Time']] = jobs['Times'].str.strip().str.split("-",expand=True)
-    jobs["Start Time"] = pd.to_datetime(jobs["Start Time"].str.strip(),format = "%I:%M %p")
-    jobs["Start Time"] = pd.to_numeric(jobs["Start Time"].dt.strftime("%H"))
-    jobs["End Time"] = pd.to_datetime(jobs["End Time"].str.strip(),format = "%I:%M %p")
-    jobs["End Time"] = pd.to_numeric(jobs["End Time"].dt.strftime("%H"))
-    jobs['Download Time'] = now
-    jobs['Unavailable Time'] = pd.NaT
-    jobs.drop_duplicates(inplace = True)
-
-    return jobs
 
 ##############
 ###  Main  ###
@@ -260,7 +268,6 @@ if __name__ == "__main__":
     driver = webdriver.Chrome(options=op)
 
     with open("info.txt","r") as f:
-        global info
         info = json.load(f)
 
     last_error = None
@@ -273,13 +280,13 @@ if __name__ == "__main__":
 
         if os.path.isfile('pause.txt'):
             while os.path.isfile('pause.txt'):
+                print('Pausing')
                 time.sleep(60)
 
         if os.path.isfile('stop.txt'):
             print("Stop file found. Exiting...")
             sys.exit()
 
-        global now
         now = dt.datetime.now()
         # If it's a weekday evening between 6am and 10pm, or if it's Sunday night between 5 and 10,
         # Check every 2 minutes
@@ -288,7 +295,7 @@ if __name__ == "__main__":
             s = 120
 
         try:
-            current_jobs = get_current_jobs()
+            current_jobs = get_current_available_jobs()
             new_jobs = archive_jobs_and_return_new(current_jobs)
             filtered_jobs = filter_jobs(new_jobs)
             message = create_message(filtered_jobs)
@@ -300,14 +307,16 @@ if __name__ == "__main__":
                 last_error = None
 
         except Exception as e:
-            error = str(type(e).__name__) + '\n' + str(e)
+            error = traceback.format_exc()
             print(error)
             with open("log.txt","a") as f:
-                f.write(error + "\n")
+                f.write(str(error) + "\n")
             # If this isn't just a repeat of the last exception, then
             if type(e) is not type(last_error) or e.args != last_error.args:
                 # send a notification about the exception
-                send_message(f"System down with {error[:120]}\nat {dt.datetime.now()}")
+                error = error.split('\n')
+                error_message = '\n'.join(error[-2:])
+                send_message(f"System down.\n{error_message}")
                 last_error = e
                 
         if last_error:
