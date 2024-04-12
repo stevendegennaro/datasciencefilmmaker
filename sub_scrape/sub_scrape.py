@@ -51,24 +51,24 @@ def get_current_available_jobs() -> pd.DataFrame:
     wait = WebDriverWait(driver, 10)
     table = wait.until(EC.presence_of_element_located((By.ID, "tableTable")))
     table_html = table.get_attribute("outerHTML")
-    jobs = pd.read_html(io.StringIO(table_html))[0]
+    available_jobs = pd.read_html(io.StringIO(table_html))[0]
     now = np.datetime64(dt.datetime.today()).astype('datetime64[ns]')
 
     # Convert dates and times
-    jobs['Job Start Date'] = pd.to_datetime(jobs['Job Start Date'])
-    jobs['Job End Date'] = pd.to_datetime(jobs['Job End Date'])
-    jobs[['Start Time','End Time']] = jobs['Times'].str.strip().str.split("-",expand=True)
-    jobs["Start Time"] = pd.to_datetime(jobs["Start Time"].str.strip(),format = "%I:%M %p")
-    jobs["Start Time"] = pd.to_numeric(jobs["Start Time"].dt.strftime("%H"))
-    jobs["End Time"] = pd.to_datetime(jobs["End Time"].str.strip(),format = "%I:%M %p")
-    jobs["End Time"] = pd.to_numeric(jobs["End Time"].dt.strftime("%H"))
-    jobs['Download Time'] = now
-    jobs['Unavailable Time'] = pd.NaT
-    jobs.drop_duplicates(inplace = True)
+    available_jobs['Job Start Date'] = pd.to_datetime(available_jobs['Job Start Date'])
+    available_jobs['Job End Date'] = pd.to_datetime(available_jobs['Job End Date'])
+    available_jobs[['Start Time','End Time']] = available_jobs['Times'].str.strip().str.split("-",expand=True)
+    available_jobs["Start Time"] = pd.to_datetime(available_jobs["Start Time"].str.strip(),format = "%I:%M %p")
+    available_jobs["Start Time"] = pd.to_numeric(available_jobs["Start Time"].dt.strftime("%H"))
+    available_jobs["End Time"] = pd.to_datetime(available_jobs["End Time"].str.strip(),format = "%I:%M %p")
+    available_jobs["End Time"] = pd.to_numeric(available_jobs["End Time"].dt.strftime("%H"))
+    available_jobs['Download Time'] = now
+    available_jobs['Unavailable Time'] = pd.NaT
+    available_jobs.drop_duplicates(inplace = True)
 
-    return jobs
+    return available_jobs
 
-def archive_jobs_and_return_new(jobs: pd.DataFrame) -> pd.DataFrame:
+def archive_jobs_and_return_new(available_jobs: pd.DataFrame) -> pd.DataFrame:
     '''
     Take the list of jobs just downloaded from the website
     and compares it against a list of every job we've already seen.
@@ -78,37 +78,33 @@ def archive_jobs_and_return_new(jobs: pd.DataFrame) -> pd.DataFrame:
     Returns the list of new jobs
     '''
     print("Archiving jobs...")
-    old_jobs = pd.read_csv('old_jobs.csv',
+    previous_open_jobs = pd.read_csv('open_jobs.csv',
                             parse_dates = ['Job Start Date',
                                            'Job End Date',
                                            'Download Time',
                                            'Unavailable Time'])
 
-    # Get rid of old_jobs that we've already recorded an Unavailable Time for
-    check_jobs = old_jobs[old_jobs['Unavailable Time'].isnull()]
-
     # Compare the two lists to see:
-    left = check_jobs.drop(['Download Time','Unavailable Time'], axis=1)
-    right = jobs.drop(['Download Time','Unavailable Time'], axis=1)
+    left = previous_open_jobs.drop(['Download Time','Unavailable Time'], axis=1)
+    right = available_jobs.drop(['Download Time','Unavailable Time'], axis=1)
     # which jobs that used to be there are now gone
-    unavailable = pd.merge(left,right, how='left', indicator=True).set_axis(check_jobs.index)
-    unavailable = unavailable['_merge'] == 'left_only'
+    merged = pd.merge(left,right, how='left', indicator=True).set_axis(previous_open_jobs.index)
+    not_open_anymore = merged['_merge'] == 'left_only'
     # which jobs that weren't there before are there now
-    new = pd.merge(left,right, how='right', indicator=True).set_axis(jobs.index)
-    new = new['_merge'] == 'right_only'
+    merged = pd.merge(left,right, how='right', indicator=True).set_axis(available_jobs.index)
+    new_open_jobs = merged['_merge'] == 'right_only'
 
-    # If a job is now gone, set its end time to now
-    check_jobs.loc[unavailable,'Unavailable Time'] = now
+    # If a job is now gone, set its end time to now and output to the end of the file
+    closed_jobs = previous_open_jobs.loc[not_open_anymore]
+    closed_jobs.loc[:,'Unavailable Time'] = now
+    closed_jobs.to_csv('closed_jobs.csv', mode='a', index=False, header=False)
+
     # Find the new jobs
-    new_jobs = jobs[new]
-    # Add the new jobs to the old jobs and jobs that are newly unavailable
-    old_jobs = old_jobs[~old_jobs['Unavailable Time'].isnull()] 
-    old_jobs = pd.concat([old_jobs,check_jobs,new_jobs])
-    # Output the result
-    old_jobs.sort_values(by=['Job Start Date'])
-    old_jobs.to_csv('old_jobs.csv',index = False)
-    backup_file = 'old_jobs_backups/old_jobs_backup_' + pd.to_datetime(now).strftime('%Y_%m_%d') + '.csv'
-    old_jobs.to_csv(backup_file,index = False)
+    new_jobs = available_jobs[new_open_jobs]
+
+    # Save all open jobs to file
+    still_open_jobs = pd.concat([previous_open_jobs.loc[~not_open_anymore],new_jobs])
+    still_open_jobs.to_csv('open_jobs.csv',index = False)
 
     return new_jobs
 
@@ -278,6 +274,7 @@ if __name__ == "__main__":
     # Main Loop
     while True:
 
+
         if os.path.isfile('pause.txt'):
             while os.path.isfile('pause.txt'):
                 print('Pausing')
@@ -295,8 +292,8 @@ if __name__ == "__main__":
             s = 120
 
         try:
-            current_jobs = get_current_available_jobs()
-            new_jobs = archive_jobs_and_return_new(current_jobs)
+            available_jobs = get_current_available_jobs()
+            new_jobs = archive_jobs_and_return_new(available_jobs)
             filtered_jobs = filter_jobs(new_jobs)
             message = create_message(filtered_jobs)
             if message: send_message(message)
@@ -307,16 +304,14 @@ if __name__ == "__main__":
                 last_error = None
 
         except Exception as e:
-            error = traceback.format_exc()
-            print(error)
+            tb = traceback.format_exc()
+            print(tb)
             with open("log.txt","a") as f:
-                f.write(str(error) + "\n")
+                f.write(str(tb) + "\n")
             # If this isn't just a repeat of the last exception, then
             if type(e) is not type(last_error) or e.args != last_error.args:
                 # send a notification about the exception
-                error = error.split('\n')
-                error_message = '\n'.join(error[-2:])
-                send_message(f"System down.\n{error_message}")
+                send_message(f"System down at {dt.datetime.now()}\n{type(e).__name__}\n{str(e)[:100]} ")
                 last_error = e
                 
         if last_error:

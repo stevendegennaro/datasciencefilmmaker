@@ -5,3 +5,7 @@ log.txt
 old_jobs_backups/
 pause.txt
 *conflicted*
+closed_jobs.csv
+open_jobs.csv
+staging/
+pause*
