@@ -1,10 +1,12 @@
 import pandas as pd
-import astropy as ap
 import calendar
 import matplotlib.pyplot as plt
 import numpy as np
 import datetime as dt
 import jdcal
+import scipy
+import nfft
+import sys
 
 def convert_time_to_julian_date_fraction(time_string):
     h,m,s = time_string.split(':')
@@ -45,6 +47,10 @@ def import_solar_eclipse_data():
 
     return data
 
+
+############################
+#### Plotting Functions ####
+############################
 
 def plot_interval_histogram(data):
     plt.hist(data['Time to Next'],bins =  100)
@@ -127,6 +133,135 @@ def plot_interval_vs_time(data, plot_saros = True, xlim = (1.464e6,1.51e6)):
 
     # print(lines[0])
 
+###########################
+#### Fourier Transform ####
+###########################
+
+
+def time_to_next(data, jd_list):
+    index_list = (data['Julian Date'].searchsorted(jd_list)).clip(0,len(data)-1)
+    difference = data.iloc[index_list]['Julian Date'] - jd_list
+    return difference 
+
+
+def intervals_fft(data):
+    x = np.arange(int(np.round(data.iloc[0]['Julian Date'])),int(np.round(data.iloc[-1]['Julian Date'])))
+    y = time_to_next(data,x)
+    plt.scatter(x,y,marker='.',s=1)
+    plt.show()
+
+    # f = scipy.interpolate.interp1d(data['Julian Date'], data['Time to Next'])
+    # return f
+    # x = np.arange(data.iloc[0]['Julian Date'],data.iloc[-1]['Julian Date'],1/24.0/60.0)
+    # y = f(x)
+
+    # plt.ion()
+    # plot_interval_vs_time(data, plot_saros = False, xlim = (1.464e6,1.51e6))
+    # plt.scatter(x,y,marker='.',s=1,color='red')
+    # plt.ioff()
+
+def julian_dates_to_x(julian_dates):
+    return (julian_dates - min(julian_dates))/(1.00001*(max(julian_dates) - min(julian_dates))) - 0.5
+
+def x_to_jd():
+    pass
+
+def my_ifft(f_k):
+    n = len(f_k)  # Length of the input array
+    # time_indices = np.arange(n)  # Time indices
+    A = []
+    for m in range(n):
+        a_m = 0
+        for k in range(n):
+            # print(m,k,a_m,f_k * np.exp(2 * np.pi * 1j * (m * k / n)))
+            a_m += f_k[k] * np.exp(2 * np.pi * 1j * (m * k / n))
+            print(m,k,a_m)
+        a_m /= n
+        A.append(a_m)
+        # print(A)
+
+    # x = (1/N) * np.sum(f_k * np.exp(1j * 2 * np.pi * np.outer(n, np.arange(N)) / N), axis=1)
+    return A
+
+def toy_model():
+    average_interval = 179.0
+    interval_dispersion = 1.0
+    N = 1000
+    cycles = 10
+    intervals = interval_dispersion * np.cos(cycles * 2 * np.pi * np.arange(0,N) / N) + average_interval
+
+    start = 1.0e6
+    julian_dates = [start]
+    for i in range(N-1):
+        julian_dates.append(julian_dates[i] + intervals[i])
+
+    julian_dates = np.array(julian_dates)
+    intervals = np.array(intervals)
+    # intervals -= np.mean(intervals)
+    x = julian_dates_to_x(julian_dates)
+    f = intervals - np.mean(intervals)
+    n_k = 500
+    k = -(n_k // 2) + np.arange(n_k)
+    f_k = nfft.ndft_adjoint(x, f, len(k))
+
+    # return(f_k)
+
+    # f_reconstructed = np.fft.ifft(f_k)
+
+    fig,ax = plt.subplots(2,1)
+
+    ax[0].scatter(x,f,marker='.')
+    ax[1].plot(k, f_k.real, label='real')
+    ax[1].plot(k, f_k.imag, label='imag')
+    ax[1].legend()
+    # 
+    # plt.scatter(x,f_x_direct,marker='.')
+    # print(f_k)
+    # return f_k
+
+    plt.show()
+    return f_k
+
+
+def nfft_test(N_x = 10000, 
+              N_k = 1000, 
+              n_waves = 10, 
+              scatter_scale = 0.01, 
+              sin = True, 
+              equal_space = False):
+    x = np.arange(-0.5,0.49999,1/N_x)
+    if not equal_space:
+        x += np.random.normal(scale = scatter_scale, size = N_x)
+        x = x[(x >= -0.5) & (x < 0.5)]
+        x = np.sort(x)
+
+    y = np.sin(n_waves * 2 * np.pi * x) if sin else np.cos(n_waves * 2 * np.pi * x)
+    # print(N_k, N_k % 2)
+    if N_k % 2:
+        N_k += 1
+
+    k = -(N_k/2) + np.arange(N_k)
+    print("Calculating Fourier Transform")
+    f_k = nfft.ndft_adjoint(x, y, len(k))
+
+    plt.ion()
+    fig,ax = plt.subplots(3,1)
+
+    print("Calculating Y values")
+    y_r = nfft.ndft(x,f_k)/len(x)
+
+    ax[0].scatter(x,y)
+    ax[0].scatter(x,y_r.real,color='black',marker='.',s=1)
+
+    ax[1].plot(x,y_r.real-y,color='red')
+
+    ax[2].plot(k, f_k.real, label='real')
+    ax[2].plot(k, f_k.imag, label='imag')
+    ax[2].legend()
+
+    fig.suptitle(f"N_x = {N_x}, N_k = {N_k}")
+
+    plt.show()
 
  #                           TD of
  # Cat. Canon    Calendar   Greatest          Luna Saros Ecl.           Ecl.                Sun  Sun  Path Central
@@ -156,4 +291,19 @@ def plot_interval_vs_time(data, plot_saros = True, xlim = (1.464e6,1.51e6)):
 
 # "There is some historical uncertainty as to which years from 43 BCE to 8 CE were counted as leap years. For the purposes of this web site, we assume that all Julian years divisible by 4 are be counted as leap years."
 
+# https://medium.com/geekculture/down-the-rabbit-hole-of-event-prediction-a-guide-to-time-related-event-analysis-and-beyond-7529591adada
+# https://ragulpr.github.io/2016/12/22/WTTE-RNN-Hackless-churn-modeling/
+# https://github.com/daynebatten/keras-wtte-rnn
+# https://github.com/ragulpr/wtte-rnn/tree/master/python
+# https://pypi.org/project/pynufft/0.3.2.8/
+# https://dsp.stackexchange.com/questions/16590/non-uniform-fft-dft-with-fftw
+# https://github.com/jakevdp/nfft
+
+
+# Environment Installs:
+# matplotlib
+# pandas
+# scipy
+# jdcal
+# ipython
 
