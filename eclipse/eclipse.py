@@ -133,98 +133,199 @@ def plot_interval_vs_time(data, plot_saros = True, xlim = (1.464e6,1.51e6)):
 
     # print(lines[0])
 
+def plot_sync_problem(data):
+    plt.scatter(data.iloc[0:100]['Julian Date'],np.repeat(1,100))
+
+    date = data.iloc[0]['Julian Date']
+    while date < data.iloc[100]['Julian Date']:
+        plt.axvline(date,zorder=0,color="black")
+        date += 179
+        plt.show()
+
 ###########################
 #### Fourier Transform ####
 ###########################
 
-
-def time_to_next(data, jd_list):
-    index_list = (data['Julian Date'].searchsorted(jd_list)).clip(0,len(data)-1)
-    difference = data.iloc[index_list]['Julian Date'] - jd_list
-    return difference 
-
-
-def intervals_fft(data):
-    x = np.arange(int(np.round(data.iloc[0]['Julian Date'])),int(np.round(data.iloc[-1]['Julian Date'])))
-    y = time_to_next(data,x)
-    plt.scatter(x,y,marker='.',s=1)
-    plt.show()
-
-    # f = scipy.interpolate.interp1d(data['Julian Date'], data['Time to Next'])
-    # return f
-    # x = np.arange(data.iloc[0]['Julian Date'],data.iloc[-1]['Julian Date'],1/24.0/60.0)
-    # y = f(x)
-
-    # plt.ion()
-    # plot_interval_vs_time(data, plot_saros = False, xlim = (1.464e6,1.51e6))
-    # plt.scatter(x,y,marker='.',s=1,color='red')
-    # plt.ioff()
-
 def julian_dates_to_x(julian_dates):
     return (julian_dates - min(julian_dates))/(1.00001*(max(julian_dates) - min(julian_dates))) - 0.5
 
-def x_to_jd():
-    pass
+def plot_nfft(x,y,y_r,k,f_k, cutoffs = None):
 
-def my_ifft(f_k):
-    n = len(f_k)  # Length of the input array
-    # time_indices = np.arange(n)  # Time indices
-    A = []
-    for m in range(n):
-        a_m = 0
-        for k in range(n):
-            # print(m,k,a_m,f_k * np.exp(2 * np.pi * 1j * (m * k / n)))
-            a_m += f_k[k] * np.exp(2 * np.pi * 1j * (m * k / n))
-            print(m,k,a_m)
-        a_m /= n
-        A.append(a_m)
-        # print(A)
+    if cutoffs:
+        x = x[cutoffs[0]:cutoffs[1]]
+        y = y[cutoffs[0]:cutoffs[1]]
+        y_r = y_r[cutoffs[0]:cutoffs[1]]
 
-    # x = (1/N) * np.sum(f_k * np.exp(1j * 2 * np.pi * np.outer(n, np.arange(N)) / N), axis=1)
-    return A
+    fig,ax = plt.subplots(3,1)
 
-def toy_model():
-    average_interval = 179.0
-    interval_dispersion = 1.0
-    N = 1000
-    cycles = 10
-    intervals = interval_dispersion * np.cos(cycles * 2 * np.pi * np.arange(0,N) / N) + average_interval
+    ax[0].scatter(x,y,color='lightgray')
+    ax[0].scatter(x,y_r.real,color='black',marker='.',s=1)
 
-    start = 1.0e6
-    julian_dates = [start]
-    for i in range(N-1):
-        julian_dates.append(julian_dates[i] + intervals[i])
+    ax[1].plot(x,y_r.real-y,color='red')
+
+    ax[2].plot(k, f_k.real, label='real')
+    ax[2].plot(k, f_k.imag, label='imag')
+    ax[2].legend(loc="upper left")
+
+    # fig.suptitle(f"N_k = {len(k)}")
+
+    return ax
+
+
+
+def get_nfft(julian_dates,intervals, cutoffs = None):
 
     julian_dates = np.array(julian_dates)
     intervals = np.array(intervals)
-    # intervals -= np.mean(intervals)
     x = julian_dates_to_x(julian_dates)
-    f = intervals - np.mean(intervals)
-    n_k = 500
-    k = -(n_k // 2) + np.arange(n_k)
-    f_k = nfft.ndft_adjoint(x, f, len(k))
+    x = x[(x >= -0.5) & (x < 0.5)]
 
-    # return(f_k)
+    y = intervals - np.mean(intervals)
+    N_k = len(x)
+    if N_k % 2:
+        N_k += 1
+    k = -(N_k // 2) + np.arange(N_k)
 
-    # f_reconstructed = np.fft.ifft(f_k)
+    print(len(x),len(y))
+    print("Calculating Fourier Transform")
+    f_k = nfft.ndft_adjoint(x, y, len(k))
 
-    fig,ax = plt.subplots(2,1)
+    print("Calculating Y values")
+    y_r = nfft.ndft(x,f_k)/len(x)
 
-    ax[0].scatter(x,f,marker='.')
-    ax[1].plot(k, f_k.real, label='real')
-    ax[1].plot(k, f_k.imag, label='imag')
-    ax[1].legend()
-    # 
-    # plt.scatter(x,f_x_direct,marker='.')
-    # print(f_k)
-    # return f_k
+    return x, y, y_r, k, f_k
+
+
+def toy_model(N_x = 1000, 
+              scatter_scale = 1.0, 
+              n_components = 20, 
+              random = False, 
+              cutoffs = None, 
+              interval_shift = True,
+              zoom = True):
+    average_interval = 179.0
+
+    frequencies = []
+    if random:
+        intervals = average_interval + scatter_scale * (np.random.rand(N_x) - 0.5)
+        zoom = False
+
+    else:
+        intervals = np.full(N_x,179.0)
+        for i in range(n_components):
+            if n_components == 1:
+                n_cycles = 10
+            else:
+                n_cycles =  100 * np.random.rand()
+            frequencies.append(n_cycles)
+            # n_cycles = 10.0
+            offset = np.random.rand() - 0.5
+            new_component = scatter_scale * np.sin(n_cycles * 2.0 * np.pi * (np.arange(0,1,1/N_x) + offset))
+            intervals += new_component
+
+
+    if interval_shift:
+        start = 1.0e6
+        julian_dates = [start]
+        for i in range(N_x - 1):
+            julian_dates.append(julian_dates[i] + intervals[i])
+
+    else:
+        julian_dates = np.linspace(-0.5, 0.49999, num = len(intervals))
+
+    data = import_solar_eclipse_data()
+    julian_dates = data['Julian Date'].iloc[0:N_x]
+
+    x, y, y_r, k, f_k = get_nfft(julian_dates,intervals)
+
+    ax = plot_nfft(x, y, y_r, k, f_k, cutoffs)
+
+    for frequency in frequencies:
+        ax[2].axvline(frequency,color="black",zorder=0)
+        ax[2].axvline(-frequency,color="black",zorder=0)
+
+    if zoom:
+        ax[2].set_xlim([-120,120])
 
     plt.show()
-    return f_k
+
+def intervals_nfft(data, 
+                   use_only_major_intervals = True, 
+                   x_range = None, 
+                   equispaced = False,
+                   cutoffs = None):
+
+    if use_only_major_intervals:
+        data = data[data['Time to Next'] > 170]
+
+    julian_dates = np.array(data['Julian Date'])
+    intervals = np.array(data['Time to Next'])
+
+    if x_range:
+        julian_dates = julian_dates[x_range[0]:x_range[1]]
+        intervals = intervals[x_range[0]:x_range[1]]
+
+    if equispaced:
+        julian_dates = np.linspace(-0.5,0.4999,len(julian_dates))
+
+    # N_x = len(julian_dates)
+    # # # average_interval = 179.0
+    # # # intervals = average_interval + 1.0 * (np.random.rand(N_x) - 0.5)
+
+    # jd_x = julian_dates_to_x(julian_dates)
+    # intervals = np.sin(10 * 2.0 * np.pi * jd_x)
+
+    x, y, y_r, k, f_k = get_nfft(julian_dates,intervals)
+    # fig,ax = plt.subplots(1,1)
+
+    # ax.scatter(x,y)
+    # ax.scatter(x,y_r.real,color='black',marker='.',s=1)
+
+    plot_nfft(x, y, y_r, k, f_k, cutoffs = cutoffs)
+
+
+def plot_fft(x,y,y_r,f_k, cutoffs = None):
+
+    period = (x - min(x))/365.2425
+
+    if cutoffs:
+        x = x[cutoffs[0]:cutoffs[1]]
+        y = y[cutoffs[0]:cutoffs[1]]
+        y_r = y_r[cutoffs[0]:cutoffs[1]]
+
+    fig,ax = plt.subplots(3,1)
+    ax[0].scatter(x,y,color="lightgray")
+
+    ax[2].plot(period,f_k.real, label='real')
+    ax[2].plot(period,f_k.imag, label='imag')
+
+    ax[1].plot(x,y_r.real-y,color='red')
+
+    ax[0].scatter(x,y_r,color="black",marker='.',s=1)
+
+def intervals_fft(data, use_only_major_intervals = False,cutoffs = None):
+    if use_only_major_intervals:
+        data[data['Time to Next'] < 170] = np.nan
+        data['Time to Next'] = data['Time to Next'].interpolate()
+    y = np.array(data['Time to Next'] - data['Time to Next'].mean())
+    x = np.array(range(len(y)))
+    # y = np.cos((10 * 2 * np.pi * x)/len(x))
+
+    print("Calculating transform")
+    f_k = np.fft.fft(y)
+    print("Calculating reverse transform")
+    y_r = np.fft.ifft(f_k)
+
+    x = data.iloc[x]['Julian Date']
+
+    plot_fft(x,y,y_r,f_k, cutoffs = cutoffs)
+
+    plt.suptitle(f"Equispaced Disctrete Fourier Transform of {'Major' if use_only_major_intervals else 'All'} Eclipse Intervals")
+    plt.show()
+
 
 
 def nfft_test(N_x = 10000, 
-              N_k = 1000, 
               n_waves = 10, 
               scatter_scale = 0.01, 
               sin = True, 
@@ -236,19 +337,18 @@ def nfft_test(N_x = 10000,
         x = np.sort(x)
 
     y = np.sin(n_waves * 2 * np.pi * x) if sin else np.cos(n_waves * 2 * np.pi * x)
-    # print(N_k, N_k % 2)
+    N_k = len(x)
     if N_k % 2:
         N_k += 1
-
     k = -(N_k/2) + np.arange(N_k)
     print("Calculating Fourier Transform")
     f_k = nfft.ndft_adjoint(x, y, len(k))
 
-    plt.ion()
-    fig,ax = plt.subplots(3,1)
-
     print("Calculating Y values")
     y_r = nfft.ndft(x,f_k)/len(x)
+
+    plt.ion()
+    fig,ax = plt.subplots(3,1)
 
     ax[0].scatter(x,y)
     ax[0].scatter(x,y_r.real,color='black',marker='.',s=1)
@@ -298,6 +398,9 @@ def nfft_test(N_x = 10000,
 # https://pypi.org/project/pynufft/0.3.2.8/
 # https://dsp.stackexchange.com/questions/16590/non-uniform-fft-dft-with-fftw
 # https://github.com/jakevdp/nfft
+# https://dsp.stackexchange.com/questions/101/how-to-extrapolate-a-1d-signal
+# https://www.tradingview.com/script/u0r2gpti-Fourier-Extrapolator-of-Price-w-Projection-Forecast-Loxx/
+# https://gist.github.com/MCRE-BE/f40daf732886d091b0886e071abf9e75
 
 
 # Environment Installs:
