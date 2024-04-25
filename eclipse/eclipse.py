@@ -1,56 +1,328 @@
 import pandas as pd
-import calendar
 import matplotlib.pyplot as plt
 import numpy as np
-import datetime as dt
 import jdcal
-import scipy
 import nfft
-import sys
+from import_eclipse_data import import_solar_eclipse_data
+from fourex import fourierExtrapolation
 
-def convert_time_to_julian_date_fraction(time_string):
-    h,m,s = time_string.split(':')
-    return (60 * 60 * int(h) + 60 * int(m) + int(s))/(24*60*60)
 
-def calculate_julian_dates(data):
-    julian_date_list = []
-    for index, row in data.iterrows():
-        if row['Year'] < 1582 or (row['Year'] == 1582 and row['Month'] < 10):
-            julian_date = jdcal.jcal2jd(row['Year'],row['Month'],row['Day'])
+########################
+#### NDFT Transform ####
+########################
+
+def julian_dates_to_x(julian_dates: list[float]) -> list[float]:
+    '''
+    The NDFT algorithm requires x values that range from [-0.5,0.5)
+    This function takes a list of Julian dates and converts them so that
+    they cover that range
+    '''
+    return (julian_dates - min(julian_dates))/(1.00001*(max(julian_dates) - min(julian_dates))) - 0.5
+
+def plot_ndft(x: np.array, 
+              y: np.array,
+              y_r: np.array,
+              k: np.array,
+              f_k: np.array,
+              set_xlimits: tuple[int,int] = None) -> plt.Axes:
+    '''
+    Function for plotting a 3-panel graph of the NDFT of a set of data
+    x = the x values
+    y - y values
+    y_r = the values that are recreated when running the inverse fourier
+    k = frequencies
+    f_k = fourier coefficients
+    set_xlimits = high and low values of x to throw away
+    '''
+
+    if set_xlimits:
+        x = x[set_xlimits[0]:set_xlimits[1]]
+        y = y[set_xlimits[0]:set_xlimits[1]]
+        y_r = y_r[set_xlimits[0]:set_xlimits[1]]
+
+    fig,ax = plt.subplots(3,1)
+
+    ax[0].scatter(x,y,color='lightgray')
+    ax[0].scatter(x,y_r.real,color='black',marker='.',s=1)
+
+    ax[1].plot(x,y_r.real-y,color='red')
+
+    ax[2].plot(k, f_k.real, label='real')
+    ax[2].plot(k, f_k.imag, label='imag')
+    ax[2].legend(loc="upper left")
+
+    return ax
+
+def get_ndft(julian_dates: np.array,
+             intervals: np.array) -> tuple[np.array,np.array,np.array,np.array,np.array]:
+    ''' Calculates the non-equispaced Fouier transform of a
+        series of data, given a list of dates and the intervals between them
+        (could be used for any date, though)
+        It then takes the x values and the fourier coefficients
+        and recreates the intervals. Process is not exact, so this 
+        will in general not be the same as the original values
+    '''
+    
+    julian_dates = np.array(julian_dates)
+    intervals = np.array(intervals)
+    x = julian_dates_to_x(julian_dates)
+    x = x[(x >= -0.5) & (x < 0.5)]
+
+    y = intervals - np.mean(intervals)
+    N_k = len(x)
+    if N_k % 2:
+        N_k += 1
+    k = -(N_k // 2) + np.arange(N_k)
+
+    print("Calculating Fourier Transform")
+    f_k = nfft.ndft_adjoint(x, y, len(k))
+
+    print("Calculating Inverse Fourier Transform")
+    y_r = nfft.ndft(x,f_k)/len(x)
+
+    return x, y, y_r, k, f_k
+
+def create_sinusoids(N_x: int = 1000, mean_y = 179.0, scatter_scale: float = 1.0, n_components:int = 20):
+
+    frequencies = []
+    y = np.full(N_x,mean_y)
+    for i in range(n_components):
+        if n_components == 1:
+            n_cycles = 10
+            amplitude = scatter_scale
+            offset = 0.0
         else:
-            julian_date = jdcal.gcal2jd(row['Year'],row['Month'],row['Day'])
-        julian_date = julian_date[0]-0.5 + julian_date[1]
-        julian_date += convert_time_to_julian_date_fraction(row['Time'])
-        julian_date_list.append(julian_date)
-    return julian_date_list
+            n_cycles =  N_x * np.random.rand() / 5
+            amplitude = max(0,np.random.normal(scatter_scale,0.5 * scatter_scale))
+            offset = np.random.rand() - 0.5
+        frequencies.append(n_cycles)
+        # n_cycles = 10.0
+        new_component = amplitude * np.sin(n_cycles * 2.0 * np.pi * (np.arange(0,1,1/N_x) + offset))
+        y += new_component
 
-def import_solar_eclipse_data():
-    filename = 'data/eclipse.gsfc.nasa.gov_5MCSE_5MCSEcatalog_no_header.txt'
-
-    data = pd.read_fwf(filename,header=None,infer_nrows=10000)
-    data.set_index(0,inplace=True)
-    data.index.name = 'Cat. Number'
-    data.columns = ('Canon Plate','Year','Month','Day','Time',\
-                    'DT','Luna Num','Saros Num','Type','Gamma','Ecl. Mag.',\
-                    'Lat.','Long.','Sun Alt','Sun Azm','Path Width','Central Duration')
-
-    #### Fix dates ###
-    # Convert month abbreviations to numbers
-    month_abbr = [m for m in calendar.month_abbr]
-    data['Month'] = data['Month'].map(lambda m: month_abbr.index(m)).astype('Int8')
-    # Convert to Julian Dates
-    data['Julian Date'] = calculate_julian_dates(data)
-
-    # Calculate intervals between eclipses
-    data['Time to Next'] = pd.DataFrame(data['Julian Date'].diff()).shift(-1)
-    data = data[:-1]
-
-    return data
+    return y,frequencies
 
 
-############################
-#### Plotting Functions ####
-############################
+def toy_model(N_x: int = 1000,
+              scatter_scale: float = 1.0,
+              random: bool = False,
+              n_components:int = 20,  
+              use_real_eclipse_dates = False,
+              interval_shift: bool = True,
+              set_xlimits:tuple[int,int] = None) -> None:
+    ''' Toy model for eclipses  
+        Creates random sinusoids or random uniform data
+        Runs NDFT on the toy model and then tries to recover
+        the original y values. Plots the results, residuals, 
+        and power spectrum
+
+        N_x = the number of x,y pairs it will create
+        scatter_scale = amplitude of sinusoids or +-y limit of random data
+        random = use uniform random (use sinusoids if false)
+        n_components = number of sinusoids to create
+        use_real_eclipse_dates = take dates from the data itself
+        interval_shift = use the intervals between each
+            eclipse to determine the x values. If false, 
+            x values are equispaced on [-0.5,0.5)
+        zoom_f_k_graph = zoom in on the bottom graph to show detail
+        set_xlimits = high and low values of x,y to throw away before plotting
+            (still used in the analysis)
+    '''
+    average_interval = 179.0 # average time between eclipses
+
+    frequencies = []
+    if random:
+        intervals = average_interval + scatter_scale * (np.random.rand(N_x) - 0.5)
+        zoom_f_k_graph = False
+
+    else:
+        intervals,frequencies = create_sinusoids(N_x, average_interval, scatter_scale, n_components)
+        zoom_f_k_graph = True
+
+    if interval_shift:
+        start = 1.0e6
+        julian_dates = [start]
+        for i in range(N_x - 1):
+            julian_dates.append(julian_dates[i] + intervals[i])
+
+    else:
+        julian_dates = np.linspace(-0.5, 0.49999, num = len(intervals))
+
+    if use_real_eclipse_dates:
+        data = import_solar_eclipse_data()
+        julian_dates = data['Julian Date'].iloc[0:N_x]
+
+    x, y, y_r, k, f_k = get_ndft(julian_dates,intervals)
+
+    ax = plot_ndft(x, y, y_r, k, f_k, set_xlimits)
+
+    for frequency in frequencies:
+        ax[2].axvline(frequency,color="black",zorder=0)
+        ax[2].axvline(-frequency,color="black",zorder=0)
+
+    if zoom_f_k_graph:
+        ax[2].set_xlim([-120,120])
+
+    plt.show()
+
+def intervals_ndft(data: pd.DataFrame, 
+                   use_only_major_intervals: bool = True, 
+                   use_x_range: tuple[int,int] = None, 
+                   equispaced: bool = False,
+                   set_xlimits: tuple[int,int] = None) -> None:
+
+    ''' Runs real eclipse data through the ndft.
+        use_only_major_intervals = only intervals > 170 days
+        use_x_range = specifices the range of eclipses to fit
+        equispaced = treat the data as equispaced
+            if false, use actual Julian dates for each eclipse as x
+        set_xlimits = high and low indices of x,y to throw away before plotting
+            (still used in the analysis)
+    '''
+
+    if use_only_major_intervals:
+        data = data[data['Time to Next'] > 170]
+
+    julian_dates = np.array(data['Julian Date'])
+    intervals = np.array(data['Time to Next'])
+
+    if use_x_range:
+        julian_dates = julian_dates[use_x_range[0]:use_x_range[1]]
+        intervals = intervals[use_x_range[0]:use_x_range[1]]
+
+    if equispaced:
+        julian_dates = np.linspace(-0.5,0.4999,len(julian_dates))
+
+    ### To test random data at real Julian Dates
+    # N_x = len(julian_dates)
+    # average_interval = 179.0
+    # intervals = average_interval + 1.0 * (np.random.rand(N_x) - 0.5)
+
+    ### To test a sine wave at real Julian dates
+    # jd_x = julian_dates_to_x(julian_dates)
+    # intervals = np.sin(10 * 2.0 * np.pi * jd_x)
+
+    x, y, y_r, k, f_k = get_ndft(julian_dates,intervals)
+
+    ax = plot_ndft(x, y, y_r, k, f_k, set_xlimits = set_xlimits)
+
+    plt.show()
+
+
+def plot_rfft(x: np.array,
+              y: np.array,
+              y_r: np.array,
+              f_k: np.array,
+              plot_by_freq: bool = False,
+              set_xlimits = None) -> None:
+    ''' Similar to plot_ndft but for fast fourier transforms '''
+
+    # to plot period as number of years
+    print(len(f_k))
+    period = (max(x) - min(x))/(np.arange(len(f_k)))/364.2425
+    # freq = (np.arange(len(f_k)))/(max(x) - min(x))
+    # period = 1/freq/364.2425
+    # period = np.insert(period,0,0)
+
+    if set_xlimits:
+        x = x[set_xlimits[0]:set_xlimits[1]]
+        y = y[set_xlimits[0]:set_xlimits[1]]
+        y_r = y_r[set_xlimits[0]:set_xlimits[1]]
+
+    x = (x - min(x))/365.2524 - 2024
+
+    fig,ax = plt.subplots(3,1)
+    ax[0].scatter(x,y,color="lightgray")
+    ax[0].scatter(x,y_r,color="black",marker='.',s=1)
+    ax[1].plot(x,y_r.real-y,color='red')
+    if plot_by_freq: ax[2].plot(np.arange(len(f_k)),np.absolute(f_k),color='darkorange')
+    else: ax[2].plot(period,np.absolute(f_k),color='darkorange')
+    ax[2].set_xscale('log')
+
+    return ax
+
+def intervals_rfft(data: pd.DataFrame,
+                   no_future: bool = False,
+                   use_only_major_intervals: bool = False, 
+                   set_xlimits: tuple[int,int] = None, 
+                   plot_by_freq: bool = False) -> None:
+    if use_only_major_intervals:
+        data = data.copy()
+        data[data['Time to Next'] < 170] = np.nan
+        data['Time to Next'] = data['Time to Next'].interpolate()
+    
+    if no_future:
+        data = data[(data['Year']<=2023) | ((data['Year'] == 2024) & (data['Month'] == 4))]
+
+    y = np.array(data['Time to Next']) #- data['Time to Next'].mean())
+    x = np.array(range(len(y)))
+    # y = np.sin((57 * 2 * np.pi * x)/len(x)) + 5
+    y = y - y.mean()
+
+    print("Calculating transform")
+    f_k = np.fft.rfft(y)
+    print("Calculating reverse transform")
+    y_r = np.fft.irfft(f_k,len(x))
+
+    x = data.iloc[x]['Julian Date']
+
+    ax = plot_rfft(x,y,y_r,f_k, set_xlimits = set_xlimits,plot_by_freq = plot_by_freq)
+
+    ax[2].axvline(6585.321/365.2425)
+
+    plt.suptitle(f"Equispaced Disctrete Fourier Transform of {'Major' if use_only_major_intervals else 'All'} Eclipse Intervals")
+    plt.show()
+ 
+#####################
+### Extrapolation ###
+#####################
+
+def extrapolate_and_get_difference(f_k, y, n_predict, harm_fractions):
+    fit = fourierExtrapolation(f_k, n_predict, harm_fractions)
+    difference = fit.real - y
+    fit_difference = sum(difference[:-n_predict] ** 2)
+    ex_difference = sum(difference[-n_predict:] ** 2)
+    return fit, difference, fit_difference, ex_difference
+
+def predict_next(data, n_frequences = 10, harm_fractions = 0.5):
+    # np.random.seed(0)
+    y = np.array(data['Time to Next']) #- data['Time to Next'].mean())
+    y, _ = create_sinusoids(1000,179.0,1.0,n_frequences)#N_x = 1000, mean_y = 179.0, scatter_scale = 1.0, n_components = 20
+        # 1000, 179, 10, 1)
+    # y = np.array(data[(data['Year']<=2023) | ((data['Year'] == 2024) & (data['Month'] == 4))]['Time to Next'])
+    n_predict = int(0.3 * len(y))
+    f_k = np.fft.fft(y[:-n_predict])
+
+    fd = []
+    ed = []
+    h = np.arange(0,1,0.01)
+    for harm_fractions in h:
+        fit, _, fit_difference, ex_difference = extrapolate_and_get_difference(f_k, y, n_predict, harm_fractions)
+        fd.append(fit_difference)
+        ed.append(ex_difference)
+
+    fig,ax = plt.subplots(2,1)
+
+    ax[1].plot(h,ed)
+    best_fit = np.argmin(ed)
+    print(best_fit, h[best_fit], ed[best_fit])
+    # plt.plot(h,fd)
+
+    fit, _, fit_difference, ex_difference = extrapolate_and_get_difference(f_k, y, n_predict, h[best_fit])
+
+
+    # extrapolation = fit[-n_predict:]
+    ax[0].plot(y, 'black', label = 'actual', linewidth = 1)
+    ax[0].plot(fit[:-n_predict], 'r', linestyle = "--",label = 'fit')
+    ax[0].plot(np.arange(len(f_k), len(f_k) + n_predict), fit[-n_predict:], \
+        'b', linestyle = ":",label = 'extrapolation')
+
+    plt.show()
+
+
+#############################
+#### Miscellaneous Plots ####
+#############################
 
 def plot_interval_histogram(data):
     plt.hist(data['Time to Next'],bins =  100)
@@ -142,226 +414,7 @@ def plot_sync_problem(data):
         date += 179
         plt.show()
 
-###########################
-#### Fourier Transform ####
-###########################
 
-def julian_dates_to_x(julian_dates):
-    return (julian_dates - min(julian_dates))/(1.00001*(max(julian_dates) - min(julian_dates))) - 0.5
-
-def plot_nfft(x,y,y_r,k,f_k, cutoffs = None):
-
-    if cutoffs:
-        x = x[cutoffs[0]:cutoffs[1]]
-        y = y[cutoffs[0]:cutoffs[1]]
-        y_r = y_r[cutoffs[0]:cutoffs[1]]
-
-    fig,ax = plt.subplots(3,1)
-
-    ax[0].scatter(x,y,color='lightgray')
-    ax[0].scatter(x,y_r.real,color='black',marker='.',s=1)
-
-    ax[1].plot(x,y_r.real-y,color='red')
-
-    ax[2].plot(k, f_k.real, label='real')
-    ax[2].plot(k, f_k.imag, label='imag')
-    ax[2].legend(loc="upper left")
-
-    # fig.suptitle(f"N_k = {len(k)}")
-
-    return ax
-
-
-
-def get_nfft(julian_dates,intervals, cutoffs = None):
-
-    julian_dates = np.array(julian_dates)
-    intervals = np.array(intervals)
-    x = julian_dates_to_x(julian_dates)
-    x = x[(x >= -0.5) & (x < 0.5)]
-
-    y = intervals - np.mean(intervals)
-    N_k = len(x)
-    if N_k % 2:
-        N_k += 1
-    k = -(N_k // 2) + np.arange(N_k)
-
-    print(len(x),len(y))
-    print("Calculating Fourier Transform")
-    f_k = nfft.ndft_adjoint(x, y, len(k))
-
-    print("Calculating Y values")
-    y_r = nfft.ndft(x,f_k)/len(x)
-
-    return x, y, y_r, k, f_k
-
-
-def toy_model(N_x = 1000, 
-              scatter_scale = 1.0, 
-              n_components = 20, 
-              random = False, 
-              cutoffs = None, 
-              interval_shift = True,
-              zoom = True):
-    average_interval = 179.0
-
-    frequencies = []
-    if random:
-        intervals = average_interval + scatter_scale * (np.random.rand(N_x) - 0.5)
-        zoom = False
-
-    else:
-        intervals = np.full(N_x,179.0)
-        for i in range(n_components):
-            if n_components == 1:
-                n_cycles = 10
-            else:
-                n_cycles =  100 * np.random.rand()
-            frequencies.append(n_cycles)
-            # n_cycles = 10.0
-            offset = np.random.rand() - 0.5
-            new_component = scatter_scale * np.sin(n_cycles * 2.0 * np.pi * (np.arange(0,1,1/N_x) + offset))
-            intervals += new_component
-
-
-    if interval_shift:
-        start = 1.0e6
-        julian_dates = [start]
-        for i in range(N_x - 1):
-            julian_dates.append(julian_dates[i] + intervals[i])
-
-    else:
-        julian_dates = np.linspace(-0.5, 0.49999, num = len(intervals))
-
-    data = import_solar_eclipse_data()
-    julian_dates = data['Julian Date'].iloc[0:N_x]
-
-    x, y, y_r, k, f_k = get_nfft(julian_dates,intervals)
-
-    ax = plot_nfft(x, y, y_r, k, f_k, cutoffs)
-
-    for frequency in frequencies:
-        ax[2].axvline(frequency,color="black",zorder=0)
-        ax[2].axvline(-frequency,color="black",zorder=0)
-
-    if zoom:
-        ax[2].set_xlim([-120,120])
-
-    plt.show()
-
-def intervals_nfft(data, 
-                   use_only_major_intervals = True, 
-                   x_range = None, 
-                   equispaced = False,
-                   cutoffs = None):
-
-    if use_only_major_intervals:
-        data = data[data['Time to Next'] > 170]
-
-    julian_dates = np.array(data['Julian Date'])
-    intervals = np.array(data['Time to Next'])
-
-    if x_range:
-        julian_dates = julian_dates[x_range[0]:x_range[1]]
-        intervals = intervals[x_range[0]:x_range[1]]
-
-    if equispaced:
-        julian_dates = np.linspace(-0.5,0.4999,len(julian_dates))
-
-    # N_x = len(julian_dates)
-    # # # average_interval = 179.0
-    # # # intervals = average_interval + 1.0 * (np.random.rand(N_x) - 0.5)
-
-    # jd_x = julian_dates_to_x(julian_dates)
-    # intervals = np.sin(10 * 2.0 * np.pi * jd_x)
-
-    x, y, y_r, k, f_k = get_nfft(julian_dates,intervals)
-    # fig,ax = plt.subplots(1,1)
-
-    # ax.scatter(x,y)
-    # ax.scatter(x,y_r.real,color='black',marker='.',s=1)
-
-    plot_nfft(x, y, y_r, k, f_k, cutoffs = cutoffs)
-
-
-def plot_fft(x,y,y_r,f_k, cutoffs = None):
-
-    period = (x - min(x))/365.2425
-
-    if cutoffs:
-        x = x[cutoffs[0]:cutoffs[1]]
-        y = y[cutoffs[0]:cutoffs[1]]
-        y_r = y_r[cutoffs[0]:cutoffs[1]]
-
-    fig,ax = plt.subplots(3,1)
-    ax[0].scatter(x,y,color="lightgray")
-
-    ax[2].plot(period,f_k.real, label='real')
-    ax[2].plot(period,f_k.imag, label='imag')
-
-    ax[1].plot(x,y_r.real-y,color='red')
-
-    ax[0].scatter(x,y_r,color="black",marker='.',s=1)
-
-def intervals_fft(data, use_only_major_intervals = False,cutoffs = None):
-    if use_only_major_intervals:
-        data[data['Time to Next'] < 170] = np.nan
-        data['Time to Next'] = data['Time to Next'].interpolate()
-    y = np.array(data['Time to Next'] - data['Time to Next'].mean())
-    x = np.array(range(len(y)))
-    # y = np.cos((10 * 2 * np.pi * x)/len(x))
-
-    print("Calculating transform")
-    f_k = np.fft.fft(y)
-    print("Calculating reverse transform")
-    y_r = np.fft.ifft(f_k)
-
-    x = data.iloc[x]['Julian Date']
-
-    plot_fft(x,y,y_r,f_k, cutoffs = cutoffs)
-
-    plt.suptitle(f"Equispaced Disctrete Fourier Transform of {'Major' if use_only_major_intervals else 'All'} Eclipse Intervals")
-    plt.show()
-
-
-
-def nfft_test(N_x = 10000, 
-              n_waves = 10, 
-              scatter_scale = 0.01, 
-              sin = True, 
-              equal_space = False):
-    x = np.arange(-0.5,0.49999,1/N_x)
-    if not equal_space:
-        x += np.random.normal(scale = scatter_scale, size = N_x)
-        x = x[(x >= -0.5) & (x < 0.5)]
-        x = np.sort(x)
-
-    y = np.sin(n_waves * 2 * np.pi * x) if sin else np.cos(n_waves * 2 * np.pi * x)
-    N_k = len(x)
-    if N_k % 2:
-        N_k += 1
-    k = -(N_k/2) + np.arange(N_k)
-    print("Calculating Fourier Transform")
-    f_k = nfft.ndft_adjoint(x, y, len(k))
-
-    print("Calculating Y values")
-    y_r = nfft.ndft(x,f_k)/len(x)
-
-    plt.ion()
-    fig,ax = plt.subplots(3,1)
-
-    ax[0].scatter(x,y)
-    ax[0].scatter(x,y_r.real,color='black',marker='.',s=1)
-
-    ax[1].plot(x,y_r.real-y,color='red')
-
-    ax[2].plot(k, f_k.real, label='real')
-    ax[2].plot(k, f_k.imag, label='imag')
-    ax[2].legend()
-
-    fig.suptitle(f"N_x = {N_x}, N_k = {N_k}")
-
-    plt.show()
 
  #                           TD of
  # Cat. Canon    Calendar   Greatest          Luna Saros Ecl.           Ecl.                Sun  Sun  Path Central
@@ -401,6 +454,7 @@ def nfft_test(N_x = 10000,
 # https://dsp.stackexchange.com/questions/101/how-to-extrapolate-a-1d-signal
 # https://www.tradingview.com/script/u0r2gpti-Fourier-Extrapolator-of-Price-w-Projection-Forecast-Loxx/
 # https://gist.github.com/MCRE-BE/f40daf732886d091b0886e071abf9e75
+# https://medium.com/thedeephub/mastering-time-series-forecasting-revealing-the-power-of-fourier-terms-in-arima-d34a762be1ce#:~:text=A%20Fourier%20series%20is%20an,%2C%20weekly%2C%20or%20monthly%20seasonality.
 
 
 # Environment Installs:
