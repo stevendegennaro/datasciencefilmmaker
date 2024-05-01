@@ -5,7 +5,7 @@ import jdcal
 import nfft
 from import_eclipse_data import import_solar_eclipse_data
 from fourex import fourierExtrapolation
-
+import scipy.optimize
 
 ########################
 #### NDFT Transform ####
@@ -82,34 +82,48 @@ def get_ndft(julian_dates: np.array,
 
     return x, y, y_r, k, f_k
 
-def create_sinusoids(N_x: int = 1000, mean_y = 179.0, scatter_scale: float = 1.0, n_components:int = 20):
+def create_sinusoids(x, 
+                     mean_y = 179.0, 
+                     y_scale: float = 1.0, 
+                     x_scale: float = 10.0,
+                     n_components:int = 20) -> tuple[float,float]:
 
-    frequencies = []
-    y = np.full(N_x,mean_y)
+    omegas = np.zeros(n_components)
+    amplitudes = np.zeros(n_components)
+    phases = np.zeros(n_components)
+
+    y = np.full(len(x),mean_y)
+    x_range = max(x) - min(x)
     for i in range(n_components):
         if n_components == 1:
-            n_cycles = 10
-            amplitude = scatter_scale
-            offset = 0.0
+            n_cycles = x_scale
+            amplitude = y_scale
+            phase = 0.0
         else:
-            n_cycles =  N_x * np.random.rand() / 5
-            amplitude = max(0,np.random.normal(scatter_scale,0.5 * scatter_scale))
-            offset = np.random.rand() - 0.5
-        frequencies.append(n_cycles)
-        # n_cycles = 10.0
-        new_component = amplitude * np.sin(n_cycles * 2.0 * np.pi * (np.arange(0,1,1/N_x) + offset))
+            n_cycles =  np.random.normal(0,x_scale)
+            amplitude = max(0,np.random.normal(y_scale,0.5 * y_scale))
+            phase = 2 * np.pi * np.random.rand()
+        omega = 2 * np.pi * n_cycles / x_range 
+        omegas[i] = omega
+        amplitudes[i] = amplitude
+        phases[i] = phase
+        new_component = amplitude * np.sin(omega * x + phase)
         y += new_component
 
-    return y,frequencies
+    parameters = pd.DataFrame({'w':omegas, 'a':amplitudes, 'p':phases})
+    parameters.sort_values('a',ascending = False,inplace = True)
+
+    return y, parameters
 
 
 def toy_model(N_x: int = 1000,
-              scatter_scale: float = 1.0,
+              y_scale: float = 1.0,
               random: bool = False,
               n_components:int = 20,  
               use_real_eclipse_dates = False,
               interval_shift: bool = True,
-              set_xlimits:tuple[int,int] = None) -> None:
+              set_xlimits:tuple[int,int] = None,
+              plot = False) -> None:
     ''' Toy model for eclipses  
         Creates random sinusoids or random uniform data
         Runs NDFT on the toy model and then tries to recover
@@ -117,7 +131,7 @@ def toy_model(N_x: int = 1000,
         and power spectrum
 
         N_x = the number of x,y pairs it will create
-        scatter_scale = amplitude of sinusoids or +-y limit of random data
+        y_scale = amplitude of sinusoids or +-y limit of random data
         random = use uniform random (use sinusoids if false)
         n_components = number of sinusoids to create
         use_real_eclipse_dates = take dates from the data itself
@@ -132,11 +146,11 @@ def toy_model(N_x: int = 1000,
 
     frequencies = []
     if random:
-        intervals = average_interval + scatter_scale * (np.random.rand(N_x) - 0.5)
+        intervals = average_interval + y_scale * (np.random.rand(N_x) - 0.5)
         zoom_f_k_graph = False
 
     else:
-        intervals,frequencies = create_sinusoids(N_x, average_interval, scatter_scale, n_components)
+        intervals,frequencies = create_sinusoids(N_x, average_interval, y_scale, n_components)
         zoom_f_k_graph = True
 
     if interval_shift:
@@ -154,16 +168,18 @@ def toy_model(N_x: int = 1000,
 
     x, y, y_r, k, f_k = get_ndft(julian_dates,intervals)
 
-    ax = plot_ndft(x, y, y_r, k, f_k, set_xlimits)
+    if plot:
+        ax = plot_ndft(x, y, y_r, k, f_k, set_xlimits)
 
-    for frequency in frequencies:
-        ax[2].axvline(frequency,color="black",zorder=0)
-        ax[2].axvline(-frequency,color="black",zorder=0)
+        for frequency in frequencies:
+            ax[2].axvline(frequency,color="black",zorder=0)
+            ax[2].axvline(-frequency,color="black",zorder=0)
 
-    if zoom_f_k_graph:
-        ax[2].set_xlim([-120,120])
+        if zoom_f_k_graph:
+            ax[2].set_xlim([-120,120])
 
-    plt.show()
+        plt.show()
+
 
 def intervals_ndft(data: pd.DataFrame, 
                    use_only_major_intervals: bool = True, 
@@ -266,7 +282,7 @@ def intervals_rfft(data: pd.DataFrame,
 
     x = data.iloc[x]['Julian Date']
 
-    ax = plot_rfft(x,y,y_r,f_k, set_xlimits = set_xlimits,plot_by_freq = plot_by_freq)
+    ax = plot_rfft(x,y,y_r,f_k, set_xlimits = set_xlimits, plot_by_freq = plot_by_freq)
 
     ax[2].axvline(6585.321/365.2425)
 
@@ -287,7 +303,7 @@ def extrapolate_and_get_difference(f_k, y, n_predict, harm_fractions):
 def predict_next(data, n_frequences = 10, harm_fractions = 0.5):
     # np.random.seed(0)
     y = np.array(data['Time to Next']) #- data['Time to Next'].mean())
-    y, _ = create_sinusoids(1000,179.0,1.0,n_frequences)#N_x = 1000, mean_y = 179.0, scatter_scale = 1.0, n_components = 20
+    y, _ = create_sinusoids(1000,179.0,1.0,n_frequences)#N_x = 1000, mean_y = 179.0, y_scale = 1.0, n_components = 20
         # 1000, 179, 10, 1)
     # y = np.array(data[(data['Year']<=2023) | ((data['Year'] == 2024) & (data['Month'] == 4))]['Time to Next'])
     n_predict = int(0.3 * len(y))
@@ -414,7 +430,112 @@ def plot_sync_problem(data):
         date += 179
         plt.show()
 
+def fit_sin(tt, yy):
+    '''Fit sin to the input time sequence, and return fitting parameters "amp", "omega", "phase", "offset", "freq", "period" and "fitfunc"'''
+    tt = np.array(tt)
+    yy = np.array(yy)
+    ff = np.fft.fftfreq(len(tt), (tt[1]-tt[0]))   # assume uniform spacing
+    Fyy = abs(np.fft.fft(yy))
+    guess_freq = abs(ff[np.argmax(Fyy[1:])+1])   # excluding the zero frequency "peak", which is related to offset
+    guess_amp = np.std(yy) * 2.**0.5
+    guess_offset = np.mean(yy)
+    guess = np.array([guess_amp, 2.*np.pi*guess_freq, 0., guess_offset])
 
+    def sinfunc(t, A, w, p, c):  return A * np.sin(w*t + p) + c
+    popt, pcov = scipy.optimize.curve_fit(sinfunc, tt, yy, p0=guess,method='trf')
+    A, w, p, c = popt
+    f = w/(2.*np.pi)
+    fitfunc = lambda t: A * np.sin(w*t + p) + c
+    return {"amp": A, "omega": w, "phase": p, "offset": c, "freq": f, "period": 1./f, "fitfunc": fitfunc, "maxcov": np.max(pcov), "rawres": (guess,popt,pcov)}
+
+def fit_and_plot_components(x,y,n_to_fit,axes):
+
+    # Fit and plot the sine waves
+    components = []
+    for i in range(0,n_to_fit + 1):
+        if i == 0:
+            new_y = y
+        else:
+            new_y = new_y - components[i-1]["fitfunc"](x)
+        axes[i].scatter(x, new_y, color="lightgray")
+        if i < n_to_fit: 
+            components.append(fit_sin(x, new_y))
+            axes[i].plot(x, components[i]["fitfunc"](x), "r--", linewidth=2)
+
+    y_hat = components[0]["fitfunc"](x)
+    for i in range(1,len(components)):
+        y_hat += components[i]["fitfunc"](x)
+
+    # Create new figure of final fit
+    fig,ax = plt.subplots()
+    ax.scatter(x, y, color = "lightgray")
+    ax.plot(x,y_hat,'r--')
+
+    return fig,ax
+
+def fit_test(N_x = 1000, 
+             n_components = 2,
+             x_scale = 10.0,
+             n_to_fit = None,
+             noise_amplitude:float = 0.0,
+             seed = None):
+
+    if not seed: 
+        seed = np.random.randint(100)
+        print(seed)
+    np.random.seed(seed)
+
+    if not n_to_fit: n_to_fit = n_components + 1
+
+    x = np.arange(N_x)
+    y, parameters = create_sinusoids(x = x, mean_y = 0.0, y_scale = 1.0, \
+                                     x_scale = x_scale, n_components = n_components)
+    y_noise = y + np.random.normal(0,noise_amplitude,len(y))
+
+
+    # Create axes
+    fig, axes = plt.subplots(n_to_fit + 1)
+    # Plot each actual components on top axis
+    for i in range(n_components):
+        axes[0].plot(x,parameters['a'][i] * np.sin(parameters['w'][i] * x + parameters['p'][i]),'b-', linewidth=3)
+
+    fig, ax = fit_and_plot_components(x,y_noise,n_to_fit,axes)
+
+    ax.plot(x, y, "b-")
+
+    plt.show()
+
+
+
+
+
+# def pyestimate_test(N_x = 1000, 
+#              n_components = 2,
+#              n_to_fit = None,
+#              noise_amplitude:float = 0.0,
+#              seed = None):
+
+#     if seed: np.random.seed(seed)
+#     if not n_to_fit: n_to_fit = n_components
+
+#     x = np.arange(N_x)
+#     y, parameters = create_sinusoids(x, 0.0, 1.0, n_components)
+#     y_noise = y + np.random.normal(0,noise_amplitude,len(y))
+
+#     # fit
+#     A, f, phi = pyestimate.multiple_sin_param_estimate(y_noise, 5)
+
+#     # reconstruct signal
+#     y_hat = 0
+#     for i in range(len(A)):
+#         y_hat += A[i] * np.cos(2*np.pi*f[i]*x+phi[i])
+
+#     # plot result
+#     plt.plot(y, '-', label='original signal')
+#     plt.plot(y_noise, '.', label='noisy input data')
+#     plt.plot(y_hat, 'r--', label='fitted signal')
+#     plt.legend()
+#     plt.show()
 
  #                           TD of
  # Cat. Canon    Calendar   Greatest          Luna Saros Ecl.           Ecl.                Sun  Sun  Path Central
@@ -455,6 +576,31 @@ def plot_sync_problem(data):
 # https://www.tradingview.com/script/u0r2gpti-Fourier-Extrapolator-of-Price-w-Projection-Forecast-Loxx/
 # https://gist.github.com/MCRE-BE/f40daf732886d091b0886e071abf9e75
 # https://medium.com/thedeephub/mastering-time-series-forecasting-revealing-the-power-of-fourier-terms-in-arima-d34a762be1ce#:~:text=A%20Fourier%20series%20is%20an,%2C%20weekly%2C%20or%20monthly%20seasonality.
+# https://stackoverflow.com/questions/16716302/how-do-i-fit-a-sine-curve-to-my-data-with-pylab-and-numpy
+# https://dsp.stackexchange.com/questions/73911/is-there-an-a-method-to-fit-a-wave-created-from-two-wave
+
+    # # Get the fourier frequencies
+    # ff = 2.0 * np.pi * np.fft.rfftfreq(len(x), (x[1]-x[0]))   # assume uniform spacing
+    # Fy = abs(np.fft.rfft(y_noise))
+    # fourier = pd.DataFrame({'ff':ff[1:],'Fy':Fy[1:]})
+    # fourier = fourier.sort_values('Fy',ascending= False).reset_index(drop=True)
+
+
+# def fit_sin_with_omega(tt, yy, w):
+#     '''Fit sin to the input time sequence, and return fitting parameters "amp", "phase", "offset", "freq", "period" and "fitfunc"'''
+#     tt = np.array(tt)
+#     yy = np.array(yy)
+#     guess_amp = np.std(yy) * 2.**0.5
+#     guess_offset = np.mean(yy)
+#     guess = np.array([guess_amp, 0., guess_offset])
+
+#     def sinfunc(t, A, p, c):  return A * np.sin(w*t + p) + c
+#     popt, pcov = scipy.optimize.curve_fit(sinfunc, tt, yy, p0=guess)
+#     A, p, c = popt
+#     f = w/(2.*np.pi)
+#     fitfunc = lambda t: A * np.sin(w*t + p) + c
+#     return {"amp": A, "omega": w, "phase": p, "offset": c, "freq": f, "period": 1./f, "fitfunc": fitfunc, "maxcov": np.max(pcov), "rawres": (guess,popt,pcov)}
+
 
 
 # Environment Installs:
@@ -463,4 +609,5 @@ def plot_sync_problem(data):
 # scipy
 # jdcal
 # ipython
+# scikit-learn
 
