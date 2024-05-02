@@ -4,7 +4,7 @@ import numpy as np
 import jdcal
 import nfft
 from import_eclipse_data import import_solar_eclipse_data
-from fourex import fourierExtrapolation
+# from fourex import fourierExtrapolation
 import scipy.optimize
 
 ########################
@@ -82,42 +82,69 @@ def get_ndft(julian_dates: np.array,
 
     return x, y, y_r, k, f_k
 
-def create_sinusoids(x, 
+##########################
+#### Create Sinusoids ####
+##########################
+
+def sinfunc(x, A, w, p, c):
+    return A * np.sin(w*x + p) + c
+
+def sines_from_df(x, df, index = None):
+    if index != None:
+        rows = [index, index + 1]
+    else:
+        rows = [0,len(df)]
+    y_hat = np.zeros(len(x))
+    for i in range(rows[0],rows[1]):
+        y_hat += sinfunc(x, df.iloc[i]['a'], df.iloc[i]['w'], df.iloc[i]['p'], df.iloc[i]['c'])
+    return y_hat
+
+def create_sinusoids(N_x = 1000, 
                      mean_y = 179.0, 
-                     y_scale: float = 1.0, 
-                     x_scale: float = 10.0,
-                     n_components:int = 20) -> tuple[float,float]:
+                     amplitude_scale: float = 1.0, 
+                     period_scale: float = 10.0,
+                     n_components:int = 20,
+                     noise_amplitude: float = 0.0):
+
+    x = np.arange(N_x)
 
     omegas = np.zeros(n_components)
     amplitudes = np.zeros(n_components)
     phases = np.zeros(n_components)
+    offsets = np.zeros(n_components)
+    offset = mean_y
 
-    y = np.full(len(x),mean_y)
     x_range = max(x) - min(x)
     for i in range(n_components):
         if n_components == 1:
-            n_cycles = x_scale
-            amplitude = y_scale
+            n_cycles = period_scale
+            amplitude = amplitude_scale
             phase = 0.0
         else:
-            n_cycles =  np.random.normal(0,x_scale)
-            amplitude = max(0,np.random.normal(y_scale,0.5 * y_scale))
+            n_cycles =  np.abs(np.random.normal(0,period_scale))
+            while (2 * n_cycles > N_x):
+                n_cycles =  np.abs(np.random.normal(0,period_scale))
+            amplitude = max(0,np.random.normal(amplitude_scale,0.5 * amplitude_scale))/np.sqrt(n_components)
             phase = 2 * np.pi * np.random.rand()
         omega = 2 * np.pi * n_cycles / x_range 
         omegas[i] = omega
         amplitudes[i] = amplitude
         phases[i] = phase
-        new_component = amplitude * np.sin(omega * x + phase)
-        y += new_component
+        offsets[i] = offset
 
-    parameters = pd.DataFrame({'w':omegas, 'a':amplitudes, 'p':phases})
+    parameters = pd.DataFrame({'w':omegas, 'a':amplitudes, 'p':phases, 'c':offsets})
     parameters.sort_values('a',ascending = False,inplace = True)
 
-    return y, parameters
+    y_noise = sines_from_df(x,parameters)
+    y_noise = y_noise + np.random.normal(0,noise_amplitude,len(y_noise))
+
+    return y_noise, parameters
+
+
 
 
 def toy_model(N_x: int = 1000,
-              y_scale: float = 1.0,
+              amplitude_scale: float = 1.0,
               random: bool = False,
               n_components:int = 20,  
               use_real_eclipse_dates = False,
@@ -131,7 +158,7 @@ def toy_model(N_x: int = 1000,
         and power spectrum
 
         N_x = the number of x,y pairs it will create
-        y_scale = amplitude of sinusoids or +-y limit of random data
+        amplitude_scale = amplitude of sinusoids or +-y limit of random data
         random = use uniform random (use sinusoids if false)
         n_components = number of sinusoids to create
         use_real_eclipse_dates = take dates from the data itself
@@ -146,11 +173,11 @@ def toy_model(N_x: int = 1000,
 
     frequencies = []
     if random:
-        intervals = average_interval + y_scale * (np.random.rand(N_x) - 0.5)
+        intervals = average_interval + amplitude_scale * (np.random.rand(N_x) - 0.5)
         zoom_f_k_graph = False
 
     else:
-        intervals,frequencies = create_sinusoids(N_x, average_interval, y_scale, n_components)
+        intervals,frequencies = create_sinusoids(N_x, average_interval, amplitude_scale, n_components)
         zoom_f_k_graph = True
 
     if interval_shift:
@@ -293,47 +320,47 @@ def intervals_rfft(data: pd.DataFrame,
 ### Extrapolation ###
 #####################
 
-def extrapolate_and_get_difference(f_k, y, n_predict, harm_fractions):
-    fit = fourierExtrapolation(f_k, n_predict, harm_fractions)
-    difference = fit.real - y
-    fit_difference = sum(difference[:-n_predict] ** 2)
-    ex_difference = sum(difference[-n_predict:] ** 2)
-    return fit, difference, fit_difference, ex_difference
+# def extrapolate_and_get_difference(f_k, y, n_predict, harm_fractions):
+#     fit = fourierExtrapolation(f_k, n_predict, harm_fractions)
+#     difference = fit.real - y
+#     fit_difference = sum(difference[:-n_predict] ** 2)
+#     ex_difference = sum(difference[-n_predict:] ** 2)
+#     return fit, difference, fit_difference, ex_difference
 
-def predict_next(data, n_frequences = 10, harm_fractions = 0.5):
-    # np.random.seed(0)
-    y = np.array(data['Time to Next']) #- data['Time to Next'].mean())
-    y, _ = create_sinusoids(1000,179.0,1.0,n_frequences)#N_x = 1000, mean_y = 179.0, y_scale = 1.0, n_components = 20
-        # 1000, 179, 10, 1)
-    # y = np.array(data[(data['Year']<=2023) | ((data['Year'] == 2024) & (data['Month'] == 4))]['Time to Next'])
-    n_predict = int(0.3 * len(y))
-    f_k = np.fft.fft(y[:-n_predict])
+# def predict_next(data, n_frequences = 10, harm_fractions = 0.5):
+#     # np.random.seed(0)
+#     y = np.array(data['Time to Next']) #- data['Time to Next'].mean())
+#     y, _ = create_sinusoids(1000,179.0,1.0,n_frequences)#N_x = 1000, mean_y = 179.0, amplitude_scale = 1.0, n_components = 20
+#         # 1000, 179, 10, 1)
+#     # y = np.array(data[(data['Year']<=2023) | ((data['Year'] == 2024) & (data['Month'] == 4))]['Time to Next'])
+#     n_predict = int(0.3 * len(y))
+#     f_k = np.fft.fft(y[:-n_predict])
 
-    fd = []
-    ed = []
-    h = np.arange(0,1,0.01)
-    for harm_fractions in h:
-        fit, _, fit_difference, ex_difference = extrapolate_and_get_difference(f_k, y, n_predict, harm_fractions)
-        fd.append(fit_difference)
-        ed.append(ex_difference)
+#     fd = []
+#     ed = []
+#     h = np.arange(0,1,0.01)
+#     for harm_fractions in h:
+#         fit, _, fit_difference, ex_difference = extrapolate_and_get_difference(f_k, y, n_predict, harm_fractions)
+#         fd.append(fit_difference)
+#         ed.append(ex_difference)
 
-    fig,ax = plt.subplots(2,1)
+#     fig,ax = plt.subplots(2,1)
 
-    ax[1].plot(h,ed)
-    best_fit = np.argmin(ed)
-    print(best_fit, h[best_fit], ed[best_fit])
-    # plt.plot(h,fd)
+#     ax[1].plot(h,ed)
+#     best_fit = np.argmin(ed)
+#     print(best_fit, h[best_fit], ed[best_fit])
+#     # plt.plot(h,fd)
 
-    fit, _, fit_difference, ex_difference = extrapolate_and_get_difference(f_k, y, n_predict, h[best_fit])
+#     fit, _, fit_difference, ex_difference = extrapolate_and_get_difference(f_k, y, n_predict, h[best_fit])
 
 
-    # extrapolation = fit[-n_predict:]
-    ax[0].plot(y, 'black', label = 'actual', linewidth = 1)
-    ax[0].plot(fit[:-n_predict], 'r', linestyle = "--",label = 'fit')
-    ax[0].plot(np.arange(len(f_k), len(f_k) + n_predict), fit[-n_predict:], \
-        'b', linestyle = ":",label = 'extrapolation')
+#     # extrapolation = fit[-n_predict:]
+#     ax[0].plot(y, 'black', label = 'actual', linewidth = 1)
+#     ax[0].plot(fit[:-n_predict], 'r', linestyle = "--",label = 'fit')
+#     ax[0].plot(np.arange(len(f_k), len(f_k) + n_predict), fit[-n_predict:], \
+#         'b', linestyle = ":",label = 'extrapolation')
 
-    plt.show()
+#     plt.show()
 
 
 #############################
@@ -430,6 +457,7 @@ def plot_sync_problem(data):
         date += 179
         plt.show()
 
+
 def fit_sin(tt, yy):
     '''Fit sin to the input time sequence, and return fitting parameters "amp", "omega", "phase", "offset", "freq", "period" and "fitfunc"'''
     tt = np.array(tt)
@@ -437,50 +465,89 @@ def fit_sin(tt, yy):
     ff = np.fft.fftfreq(len(tt), (tt[1]-tt[0]))   # assume uniform spacing
     Fyy = abs(np.fft.fft(yy))
     guess_freq = abs(ff[np.argmax(Fyy[1:])+1])   # excluding the zero frequency "peak", which is related to offset
+
     guess_amp = np.std(yy) * 2.**0.5
     guess_offset = np.mean(yy)
     guess = np.array([guess_amp, 2.*np.pi*guess_freq, 0., guess_offset])
 
-    def sinfunc(t, A, w, p, c):  return A * np.sin(w*t + p) + c
-    popt, pcov = scipy.optimize.curve_fit(sinfunc, tt, yy, p0=guess,method='trf')
+    popt, pcov = scipy.optimize.curve_fit(sinfunc, tt, yy, p0=guess,method='lm')
     A, w, p, c = popt
     f = w/(2.*np.pi)
-    fitfunc = lambda t: A * np.sin(w*t + p) + c
-    return {"amp": A, "omega": w, "phase": p, "offset": c, "freq": f, "period": 1./f, "fitfunc": fitfunc, "maxcov": np.max(pcov), "rawres": (guess,popt,pcov)}
+    fitfunc = lambda x: A * np.sin(w*x + p) + c
 
-def fit_and_plot_components(x,y,n_to_fit,axes):
+    # plt.ioff()
+    # fig,axes = plt.subplots(2)
+    # axes[0].plot(ff,Fyy)
+    # axes[0].axvline(guess_freq,color='k',linestyle='--')
+    # axes[0].axvline(w/2.0/np.pi,color='r',linestyle='--')
+    # fig.suptitle(f"{guess_freq}")
+
+    # axes[1].scatter(tt,yy)
+    # axes[1].plot(fitfunc(tt))
+    # plt.show()
+    return {"a": A, "w": w, "p": p, "c": c}
+
+def fit_sinusoidal_components(x,y,n_to_fit):
 
     # Fit and plot the sine waves
-    components = []
+    components = pd.DataFrame(columns=["a","w","p","c"])
+    residuals = []
     for i in range(0,n_to_fit + 1):
         if i == 0:
-            new_y = y
+            residuals.append(y)
         else:
-            new_y = new_y - components[i-1]["fitfunc"](x)
-        axes[i].scatter(x, new_y, color="lightgray")
+            residuals.append(residuals[i-1] - sines_from_df(x,components,i-1))
         if i < n_to_fit: 
-            components.append(fit_sin(x, new_y))
-            axes[i].plot(x, components[i]["fitfunc"](x), "r--", linewidth=2)
+            components.loc[len(components.index)] = fit_sin(x, residuals[i])
 
-    y_hat = components[0]["fitfunc"](x)
-    for i in range(1,len(components)):
-        y_hat += components[i]["fitfunc"](x)
+    # components = pd.DataFrame(components)
+    y_hat = sines_from_df(x,components)
+
+    return y_hat, components, residuals
+
+def plot_fits(x,
+              y_actual,
+              y_fit, 
+              p_fit, 
+              residuals, 
+              p_actual = None):
+
+    # Create axes
+    max_plots = min([6,len(p_fit)])
+    fig, axes = plt.subplots(max_plots + 1)
+
+    # Plot each actual sinusoidal constituent on top axis
+    if p_actual is not None:
+        for i in range(min(max_plots+1,len(p_actual))):
+            axes[i].plot(x,sines_from_df(x,p_actual,i),'b-', linewidth=3)
+
+    for i in range(0,max_plots + 1):
+        axes[i].scatter(x, residuals[i], color="lightgray")
+        if i < max_plots: 
+            axes[i].plot(x, sines_from_df(x,p_fit,i), "r--", linewidth=2)
 
     # Create new figure of final fit
-    fig,ax = plt.subplots()
-    ax.scatter(x, y, color = "lightgray")
-    ax.plot(x,y_hat,'r--')
+    fig,axes = plt.subplots(2)
+    x_range = np.linspace(min(x),2*(max(x)-min(x)) + min(x),1000)
 
-    return fig,ax
+    # ax.plot(x,y_hat,'r--')
+    if p_actual is not None: axes[0].plot(x_range, sines_from_df(x_range,p_actual), "b-")
+    axes[0].plot(x_range,sines_from_df(x_range,p_fit),'r--')
+    axes[0].scatter(x, y_actual, color = "lightgray")
+    axes[0].scatter(x,y_fit,color = 'black',marker='.')
+    axes[1].scatter(x,y_actual - y_fit,color = 'black')
+    if p_actual is not None: axes[1].plot(x_range,sines_from_df(x_range,p_actual) - sines_from_df(x_range,p_fit))
+
+    plt.show()
 
 def fit_test(N_x = 1000, 
              n_components = 2,
-             x_scale = 10.0,
+             period_scale = 50.0,
              n_to_fit = None,
              noise_amplitude:float = 0.0,
              seed = None):
 
-    if not seed: 
+    if seed is None: 
         seed = np.random.randint(100)
         print(seed)
     np.random.seed(seed)
@@ -488,23 +555,13 @@ def fit_test(N_x = 1000,
     if not n_to_fit: n_to_fit = n_components + 1
 
     x = np.arange(N_x)
-    y, parameters = create_sinusoids(x = x, mean_y = 0.0, y_scale = 1.0, \
-                                     x_scale = x_scale, n_components = n_components)
-    y_noise = y + np.random.normal(0,noise_amplitude,len(y))
+    y_actual, p_actual = create_sinusoids(N_x = N_x, mean_y = 0.0, amplitude_scale = 1.0, \
+                                     period_scale = period_scale, n_components = n_components, \
+                                     noise_amplitude = noise_amplitude)
 
+    y_fit, p_fit, residuals = fit_sinusoidal_components(x,y_actual,n_to_fit)
 
-    # Create axes
-    fig, axes = plt.subplots(n_to_fit + 1)
-    # Plot each actual components on top axis
-    for i in range(n_components):
-        axes[0].plot(x,parameters['a'][i] * np.sin(parameters['w'][i] * x + parameters['p'][i]),'b-', linewidth=3)
-
-    fig, ax = fit_and_plot_components(x,y_noise,n_to_fit,axes)
-
-    ax.plot(x, y, "b-")
-
-    plt.show()
-
+    plot_fits(x, y_actual, y_fit, p_fit, residuals, p_actual)
 
 
 
