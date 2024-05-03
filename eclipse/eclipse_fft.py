@@ -6,6 +6,7 @@ import nfft
 from import_eclipse_data import import_solar_eclipse_data
 # from fourex import fourierExtrapolation
 import scipy.optimize
+from collections import Counter
 
 ########################
 #### NDFT Transform ####
@@ -94,25 +95,26 @@ def sines_from_df(x, df, index = None):
         rows = [index, index + 1]
     else:
         rows = [0,len(df)]
-    y_hat = np.zeros(len(x))
+    y_hat = np.full(len(x),df.iloc[0]['mean_y'])
     for i in range(rows[0],rows[1]):
         y_hat += sinfunc(x, df.iloc[i]['a'], df.iloc[i]['w'], df.iloc[i]['p'], df.iloc[i]['c'])
     return y_hat
 
-def create_sinusoids(N_x = 1000, 
+def create_sinusoids(x, 
                      mean_y = 179.0, 
                      amplitude_scale: float = 1.0, 
                      period_scale: float = 10.0,
                      n_components:int = 20,
                      noise_amplitude: float = 0.0):
 
-    x = np.arange(N_x)
+    # x = np.arange(N_x)
+    N_x = len(x)
 
     omegas = np.zeros(n_components)
     amplitudes = np.zeros(n_components)
     phases = np.zeros(n_components)
     offsets = np.zeros(n_components)
-    offset = mean_y
+    offset = 0.0
 
     x_range = max(x) - min(x)
     for i in range(n_components):
@@ -124,7 +126,7 @@ def create_sinusoids(N_x = 1000,
             n_cycles =  np.abs(np.random.normal(0,period_scale))
             while (2 * n_cycles > N_x):
                 n_cycles =  np.abs(np.random.normal(0,period_scale))
-            amplitude = max(0,np.random.normal(amplitude_scale,0.5 * amplitude_scale))/np.sqrt(n_components)
+            amplitude = max(0,np.random.normal(amplitude_scale,0.5 * amplitude_scale))#/np.sqrt(n_components)
             phase = 2 * np.pi * np.random.rand()
         omega = 2 * np.pi * n_cycles / x_range 
         omegas[i] = omega
@@ -134,14 +136,11 @@ def create_sinusoids(N_x = 1000,
 
     parameters = pd.DataFrame({'w':omegas, 'a':amplitudes, 'p':phases, 'c':offsets})
     parameters.sort_values('a',ascending = False,inplace = True)
+    parameters['mean_y'] = mean_y
 
-    y_noise = sines_from_df(x,parameters)
-    y_noise = y_noise + np.random.normal(0,noise_amplitude,len(y_noise))
+    y_noise = sines_from_df(x,parameters) + np.random.normal(0,noise_amplitude,len(x))
 
     return y_noise, parameters
-
-
-
 
 def toy_model(N_x: int = 1000,
               amplitude_scale: float = 1.0,
@@ -327,6 +326,11 @@ def intervals_rfft(data: pd.DataFrame,
 #     ex_difference = sum(difference[-n_predict:] ** 2)
 #     return fit, difference, fit_difference, ex_difference
 
+
+
+
+
+
 # def predict_next(data, n_frequences = 10, harm_fractions = 0.5):
 #     # np.random.seed(0)
 #     y = np.array(data['Time to Next']) #- data['Time to Next'].mean())
@@ -487,10 +491,14 @@ def fit_sin(tt, yy):
     # plt.show()
     return {"a": A, "w": w, "p": p, "c": c}
 
-def fit_sinusoidal_components(x,y,n_to_fit):
+def fit_sinusoidal_components(x, y, n_to_fit):
+
+    mean_y = y.mean()
+    print(f"y.mean() = {y.mean()}")
+    y = y - mean_y
 
     # Fit and plot the sine waves
-    components = pd.DataFrame(columns=["a","w","p","c"])
+    components = pd.DataFrame(columns=["a","w","p","c","mean_y"])
     residuals = []
     for i in range(0,n_to_fit + 1):
         if i == 0:
@@ -498,47 +506,58 @@ def fit_sinusoidal_components(x,y,n_to_fit):
         else:
             residuals.append(residuals[i-1] - sines_from_df(x,components,i-1))
         if i < n_to_fit: 
-            components.loc[len(components.index)] = fit_sin(x, residuals[i])
+            components.loc[len(components.index)] = fit_sin(x, residuals[i]) | {'mean_y':0.0}
 
-    # components = pd.DataFrame(components)
-    y_hat = sines_from_df(x,components)
+        # print(components)
+        # plt.plot(residuals[i],'ok')
+        # plt.plot(sines_from_df(x,components,len(components.index)-1))
+        # plt.show()
 
-    return y_hat, components, residuals
+    components['mean_y'] = mean_y
+    # y_hat = sines_from_df(x,components)
+
+    # # plt.plot(y_hat,'ok')
+    # plt.plot(y + mean_y -y_hat)
+    # plt.show()
+
+    return components, residuals
 
 def plot_fits(x,
               y_actual,
-              y_fit, 
               p_fit, 
               residuals, 
-              p_actual = None):
+              p_actual = None,
+              plot_components = False):
 
-    # Create axes
-    max_plots = min([6,len(p_fit)])
-    fig, axes = plt.subplots(max_plots + 1)
+    y_fit = sines_from_df(x,p_fit)
 
-    # Plot each actual sinusoidal constituent on top axis
-    if p_actual is not None:
-        for i in range(min(max_plots+1,len(p_actual))):
-            axes[i].plot(x,sines_from_df(x,p_actual,i),'b-', linewidth=3)
+    if plot_components:
+        # Create axes
+        max_plots = min([6,len(p_fit)])
+        fig, axes = plt.subplots(max_plots + 1)
 
-    for i in range(0,max_plots + 1):
-        axes[i].scatter(x, residuals[i], color="lightgray")
-        if i < max_plots: 
-            axes[i].plot(x, sines_from_df(x,p_fit,i), "r--", linewidth=2)
+        # Plot each actual sinusoidal constituent on top axis
+        if p_actual is not None:
+            for i in range(min(max_plots+1,len(p_actual))):
+                axes[i].plot(x,sines_from_df(x,p_actual,i),'b-', linewidth=3)
+
+        for i in range(0,max_plots + 1):
+            axes[i].scatter(x, residuals[i] + p_fit.iloc[0]['mean_y'], color="lightgray")
+            if i < max_plots: 
+                axes[i].plot(x, sines_from_df(x,p_fit,i), "r--", linewidth=2)
 
     # Create new figure of final fit
     fig,axes = plt.subplots(2)
-    x_range = np.linspace(min(x),2*(max(x)-min(x)) + min(x),1000)
+    x_range = np.linspace(min(x),2*(max(x)-min(x)) + min(x),max(1000,len(x)))
 
-    # ax.plot(x,y_hat,'r--')
     if p_actual is not None: axes[0].plot(x_range, sines_from_df(x_range,p_actual), "b-")
-    axes[0].plot(x_range,sines_from_df(x_range,p_fit),'r--')
+    # axes[0].plot(x_range,sines_from_df(x_range,p_fit),'r--')
     axes[0].scatter(x, y_actual, color = "lightgray")
-    axes[0].scatter(x,y_fit,color = 'black',marker='.')
-    axes[1].scatter(x,y_actual - y_fit,color = 'black')
+    axes[0].scatter(x, y_fit,color = 'black',marker='.',s=2)
+    axes[1].scatter(x, y_actual - y_fit,color = 'black',s=3)
     if p_actual is not None: axes[1].plot(x_range,sines_from_df(x_range,p_actual) - sines_from_df(x_range,p_fit))
 
-    plt.show()
+    return fig, axes
 
 def fit_test(N_x = 1000, 
              n_components = 2,
@@ -555,13 +574,39 @@ def fit_test(N_x = 1000,
     if not n_to_fit: n_to_fit = n_components + 1
 
     x = np.arange(N_x)
-    y_actual, p_actual = create_sinusoids(N_x = N_x, mean_y = 0.0, amplitude_scale = 1.0, \
+    x = np.linspace(-100,100,N_x)
+    y_actual, p_actual = create_sinusoids(x = x, mean_y = 179.0, amplitude_scale = 1.0, \
                                      period_scale = period_scale, n_components = n_components, \
                                      noise_amplitude = noise_amplitude)
+    # plt.plot(x,y_actual,'ok')
+    # plt.plot(x,sines_from_df(x,p_actual))
+    # plt.show()
+    # return
 
-    y_fit, p_fit, residuals = fit_sinusoidal_components(x,y_actual,n_to_fit)
+    p_fit, residuals = fit_sinusoidal_components(x,y_actual,n_to_fit)
+    plot_fits(x, y_actual, p_fit, residuals, p_actual)
 
-    plot_fits(x, y_actual, y_fit, p_fit, residuals, p_actual)
+    plt.show()
+
+
+def predict_next_eclipses(data, n_data_points_to_use=1000, n_predict = 100, n_frequencies = 10):
+    data = data.copy()
+    data = data[data['Time to Next'] > 170]
+    # y_actual = np.array(data[(data['Year']<=2023) | ((data['Year'] == 2024) & (data['Month'] == 4))]['Time to Next'])
+    y_actual = np.array(data['Time to Next'].head(n_data_points_to_use))
+    x = np.arange(n_data_points_to_use)
+    p_fit, residuals = fit_sinusoidal_components(x,y_actual,n_frequencies)
+    y_extend = np.array(data['Time to Next'].head(n_data_points_to_use + n_predict))
+    x_extend = np.arange(n_data_points_to_use + n_predict)
+
+    # fig, axes = plot_fits(x, y_actual, p_fit, residuals)
+    fig, axes = plot_fits(x_extend, y_extend, p_fit, residuals)
+    axes[0].axvline(n_data_points_to_use,color='lightblue',linestyle=':')
+    axes[1].axvline(n_data_points_to_use,color='lightblue',linestyle=':')
+    # axes[0].scatter(x_extend,y_extend,color = "lightblue")
+    # axes[0].scatter(x_extend, sines_from_df(x,p_fit),color = 'black',marker='.',s=2)
+    # axes[1].scatter(x, y_extend - sines_from_df(x_extend,p_fit),color = 'darkblue',s=3)
+    plt.show()
 
 
 
