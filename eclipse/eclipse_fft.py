@@ -4,7 +4,7 @@ import numpy as np
 import jdcal
 import nfft
 from import_eclipse_data import import_solar_eclipse_data
-# from fourex import fourierExtrapolation
+from fourex import fourierExtrapolation
 import scipy.optimize
 from collections import Counter
 
@@ -25,7 +25,8 @@ def plot_ndft(x: np.array,
               y_r: np.array,
               k: np.array,
               f_k: np.array,
-              set_xlimits: tuple[int,int] = None) -> plt.Axes:
+              set_xlimits: tuple[int,int] = None,
+              top_panel_only = False) -> plt.Axes:
     '''
     Function for plotting a 3-panel graph of the NDFT of a set of data
     x = the x values
@@ -41,16 +42,21 @@ def plot_ndft(x: np.array,
         y = y[set_xlimits[0]:set_xlimits[1]]
         y_r = y_r[set_xlimits[0]:set_xlimits[1]]
 
-    fig,ax = plt.subplots(3,1)
+    if top_panel_only:
+        fig,ax = plt.subplots()
+        ax = [ax]
+    else:
+        fig,ax = plt.subplots(3,1)
 
-    ax[0].scatter(x,y,color='lightgray')
-    ax[0].scatter(x,y_r.real,color='black',marker='.',s=1)
+    ax[0].scatter(x,y)#,color='lightgray')
+    ax[0].scatter(x,y_r.real,color='black',marker='.')#,s=1)
 
-    ax[1].plot(x,y_r.real-y,color='red')
+    if not top_panel_only:
+        ax[1].plot(x,y_r.real-y,color='red')
 
-    ax[2].plot(k, f_k.real, label='real')
-    ax[2].plot(k, f_k.imag, label='imag')
-    ax[2].legend(loc="upper left")
+        ax[2].plot(k, f_k.real, label='real')
+        ax[2].plot(k, f_k.imag, label='imag')
+        ax[2].legend(loc="upper left")
 
     return ax
 
@@ -211,7 +217,8 @@ def intervals_ndft(data: pd.DataFrame,
                    use_only_major_intervals: bool = True, 
                    use_x_range: tuple[int,int] = None, 
                    equispaced: bool = False,
-                   set_xlimits: tuple[int,int] = None) -> None:
+                   set_xlimits: tuple[int,int] = None,
+                   top_panel_only: bool = False) -> None:
 
     ''' Runs real eclipse data through the ndft.
         use_only_major_intervals = only intervals > 170 days
@@ -241,14 +248,16 @@ def intervals_ndft(data: pd.DataFrame,
     # intervals = average_interval + 1.0 * (np.random.rand(N_x) - 0.5)
 
     ### To test a sine wave at real Julian dates
-    # jd_x = julian_dates_to_x(julian_dates)
-    # intervals = np.sin(10 * 2.0 * np.pi * jd_x)
+    jd_x = julian_dates_to_x(julian_dates)
+    intervals = np.sin(10 * 2.0 * np.pi * jd_x)
 
     x, y, y_r, k, f_k = get_ndft(julian_dates,intervals)
 
-    ax = plot_ndft(x, y, y_r, k, f_k, set_xlimits = set_xlimits)
+    ax = plot_ndft(x, y, y_r, k, f_k, set_xlimits = set_xlimits,top_panel_only = top_panel_only)
 
     plt.show()
+
+    return x, y, y_r, k, f_k
 
 
 def plot_rfft(x: np.array,
@@ -319,52 +328,47 @@ def intervals_rfft(data: pd.DataFrame,
 ### Extrapolation ###
 #####################
 
-# def extrapolate_and_get_difference(f_k, y, n_predict, harm_fractions):
-#     fit = fourierExtrapolation(f_k, n_predict, harm_fractions)
-#     difference = fit.real - y
-#     fit_difference = sum(difference[:-n_predict] ** 2)
-#     ex_difference = sum(difference[-n_predict:] ** 2)
-#     return fit, difference, fit_difference, ex_difference
+def extrapolate_and_get_difference(f_k, y, n_predict, harm_fractions):
+    fit = fourierExtrapolation(f_k, n_predict, harm_fractions)
+    difference = fit.real - y
+    fit_difference = sum(difference[:-n_predict] ** 2)
+    ex_difference = sum(difference[-n_predict:] ** 2)
+    return fit, difference, fit_difference, ex_difference
+
+def predict_next(data, n_frequences = 10, harm_fractions = 0.5):
+    # np.random.seed(0)
+    y = np.array(data['Time to Next']) #- data['Time to Next'].mean())
+    y, _ = create_sinusoids(1000,179.0,1.0,n_frequences)#N_x = 1000, mean_y = 179.0, amplitude_scale = 1.0, n_components = 20
+        # 1000, 179, 10, 1)
+    # y = np.array(data[(data['Year']<=2023) | ((data['Year'] == 2024) & (data['Month'] == 4))]['Time to Next'])
+    n_predict = int(0.3 * len(y))
+    f_k = np.fft.fft(y[:-n_predict])
+
+    fd = []
+    ed = []
+    h = np.arange(0,1,0.01)
+    for harm_fractions in h:
+        fit, _, fit_difference, ex_difference = extrapolate_and_get_difference(f_k, y, n_predict, harm_fractions)
+        fd.append(fit_difference)
+        ed.append(ex_difference)
+
+    fig,ax = plt.subplots(2,1)
+
+    ax[1].plot(h,ed)
+    best_fit = np.argmin(ed)
+    print(best_fit, h[best_fit], ed[best_fit])
+    # plt.plot(h,fd)
+
+    fit, _, fit_difference, ex_difference = extrapolate_and_get_difference(f_k, y, n_predict, h[best_fit])
 
 
+    # extrapolation = fit[-n_predict:]
+    ax[0].plot(y, 'black', label = 'actual', linewidth = 1)
+    ax[0].plot(fit[:-n_predict], 'r', linestyle = "--",label = 'fit')
+    ax[0].plot(np.arange(len(f_k), len(f_k) + n_predict), fit[-n_predict:], \
+        'b', linestyle = ":",label = 'extrapolation')
 
-
-
-
-# def predict_next(data, n_frequences = 10, harm_fractions = 0.5):
-#     # np.random.seed(0)
-#     y = np.array(data['Time to Next']) #- data['Time to Next'].mean())
-#     y, _ = create_sinusoids(1000,179.0,1.0,n_frequences)#N_x = 1000, mean_y = 179.0, amplitude_scale = 1.0, n_components = 20
-#         # 1000, 179, 10, 1)
-#     # y = np.array(data[(data['Year']<=2023) | ((data['Year'] == 2024) & (data['Month'] == 4))]['Time to Next'])
-#     n_predict = int(0.3 * len(y))
-#     f_k = np.fft.fft(y[:-n_predict])
-
-#     fd = []
-#     ed = []
-#     h = np.arange(0,1,0.01)
-#     for harm_fractions in h:
-#         fit, _, fit_difference, ex_difference = extrapolate_and_get_difference(f_k, y, n_predict, harm_fractions)
-#         fd.append(fit_difference)
-#         ed.append(ex_difference)
-
-#     fig,ax = plt.subplots(2,1)
-
-#     ax[1].plot(h,ed)
-#     best_fit = np.argmin(ed)
-#     print(best_fit, h[best_fit], ed[best_fit])
-#     # plt.plot(h,fd)
-
-#     fit, _, fit_difference, ex_difference = extrapolate_and_get_difference(f_k, y, n_predict, h[best_fit])
-
-
-#     # extrapolation = fit[-n_predict:]
-#     ax[0].plot(y, 'black', label = 'actual', linewidth = 1)
-#     ax[0].plot(fit[:-n_predict], 'r', linestyle = "--",label = 'fit')
-#     ax[0].plot(np.arange(len(f_k), len(f_k) + n_predict), fit[-n_predict:], \
-#         'b', linestyle = ":",label = 'extrapolation')
-
-#     plt.show()
+    plt.show()
 
 
 #############################
@@ -461,6 +465,20 @@ def plot_sync_problem(data):
         date += 179
         plt.show()
 
+
+def plot_repeat():
+    x = np.arange(0,100,1)
+    y,df = create_sinusoids(x)
+    plt.plot(x,y,'.k')
+    x = np.arange(100,200,1)
+    plt.plot(x,y,'.r')
+    x = np.arange(0,99,.01)
+    y = sines_from_df(x,df)
+    plt.plot(x,y,'b-',zorder=0)
+    x = np.arange(100,199,.01)
+    plt.plot(x,y,'b:',zorder=0)
+    plt.plot([99,100],[y[-1],y[1]],'b:')
+    plt.show()
 
 def fit_sin(tt, yy):
     '''Fit sin to the input time sequence, and return fitting parameters "amp", "omega", "phase", "offset", "freq", "period" and "fitfunc"'''
