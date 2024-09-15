@@ -197,7 +197,7 @@ def filter_jobs(new_jobs:pd.DataFrame) -> pd.DataFrame:
                         (
                             pd.concat(hs_masks, axis=1).any(axis=1) & 
                             (~afternoon_only) &
-                            (~mw_all_day) &
+                            #(~mw_all_day) &
                             # Only include jobs that are 2 days or fewer
                             (new_jobs['Day Count'] <= 2) &
                             # Only include jobs that are in the next 30 days

@@ -11,7 +11,8 @@ from analyze_companies import get_company_name
 frequencies = analyze_contacts.get_frequencies()
 emails = analyze_contacts.get_emails()
 area_codes = analyze_contacts.get_area_codes()
-domains = [email.split('@')[1] for email in emails]
+# domains = [email.split('@')[1] for email in emails]
+domains = analyze_contacts.get_domains()
 
 id_prob =  pd.Series({  "first":0.9,
                         "dot_first":0.2,
@@ -26,12 +27,7 @@ id_prob =  pd.Series({  "first":0.9,
 
 def generate_email(entry):
     domain = np.random.choice(domains)
-    while 'film' in domain \
-       or 'production' in domain \
-       or 'notification' in domain \
-       or 'fest' in domain \
-       or 'sagaftra' in domain:
-        domain = np.random.choice(domains)
+    # domain = domains.sample(1, weights = 'Percent')['Domain'].values[0]
     first = full_names["First"][entry]
     middle = full_names["Middle"][entry]
     last = full_names["Last"][entry]
@@ -128,8 +124,8 @@ firstnames_male.columns=['name','count']
 firstnames_female.columns=['name','count']
 
 # pick n_male random male first names, n_female random female first names, and (n_male + n_female) random last names
-n_male = 100
-n_female = 100
+n_male = int(0.45 * frequencies['n_contacts'])
+n_female = int(0.55 * frequencies['n_contacts'])
 random_lastnames = lastnames_df.sample(n_male + n_female, replace=True, weights='count', axis=0)['name']
 random_malenames = firstnames_male.sample(n_male * 2, replace=True, weights='count', axis=0)['name']
 random_femalenames = firstnames_female.sample(n_female * 2, replace=True, weights='count', axis=0)['name']
@@ -220,3 +216,5 @@ pd.set_option('display.max_rows', None)
 pd.set_option('display.max_columns', 6)
 pd.set_option('display.width', 500)
 print(full_names)
+
+full_names.to_csv('new_contacts.csv')

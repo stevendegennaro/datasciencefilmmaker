@@ -19,15 +19,15 @@ def interval_runs_histogram(interval_runs):
     plt.show()
 
 
-def tokenize_time_to_next(time_to_next):
-    time_to_next = time_to_next.copy()
-    time_to_next[time_to_next > 170] = 200
-    time_to_next[(time_to_next < 170) & (time_to_next > 140)] = 100
-    time_to_next[time_to_next < 99] = 0
-    time_to_next /= 100
-    time_to_next = time_to_next.astype(np.int32)
+# def tokenize_time_to_next(time_to_next):
+#     time_to_next = time_to_next.copy()
+#     time_to_next[time_to_next > 170] = 200
+#     time_to_next[(time_to_next < 170) & (time_to_next > 140)] = 100
+#     time_to_next[time_to_next < 99] = 0
+#     time_to_next /= 100
+#     time_to_next = time_to_next.astype(np.int32)
+#     return time_to_next
 
-    return time_to_next
 
 def count_interval_runs(data):
     time_to_next = np.array(data['Time to Next'])[3:-3]
@@ -63,7 +63,7 @@ def one_hot_encode_data(time_to_next, length_of_prediction_vector):
         and the target is the following intervals
     '''
 
-    time_to_next = tokenize_time_to_next(time_to_next)
+    time_to_next = np.array(time_to_next)
     n_training_samples = len(time_to_next) - length_of_prediction_vector
 
     print(f"Building training set...")
@@ -124,14 +124,13 @@ def eclipse_network(length_of_prediction_vector = 1000,
 
     # Import raw data
     data = import_solar_eclipse_data()
-
-    # data['T Time to Next'] = tokenize_time_to_next(data)
-
     train_data = data[(data['Year']<=2023) | ((data['Year'] == 2024) & (data['Month'] == 4))]
-    time_to_next = np.array(train_data['Time to Next'])
+    # time_to_next = np.array(train_data['Time to Next'])
 
+    # print(data)
+    # return
     # Convert to one-hot encoded numpy arrays
-    x, y = one_hot_encode_data(time_to_next, length_of_prediction_vector)
+    x, y = one_hot_encode_data(train_data['Level'], length_of_prediction_vector)
 
     model_file = f'models/eclipse.{length_of_prediction_vector}.{model_type}.{N_HIDDEN}.keras'
     if os.path.isfile(model_file):

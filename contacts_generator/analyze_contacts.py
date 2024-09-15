@@ -44,6 +44,7 @@ n_company_plus_name = len(names_df.loc[names_df["Company"].notna() & names_df["F
 
 def get_frequencies():
     frequencies = {
+        'n_contacts': n_contacts,
         'f_company_name_only': n_company_name_only/n_contacts,
         'f_company_plus_name': n_company_plus_name/n_contacts,
         'f_first_names_only': n_first_names_only/n_contacts,
@@ -87,6 +88,23 @@ area_codes = [number[0:3] for number in number_list]
 
 def get_emails():
     return emails
+
+def get_domains():
+    # domains = pd.read_csv('data/domains.csv')
+    # domains = domains[(domains['Domain'].str[-4:]=='.com') | 
+    #                   (domains['Domain'].str[-4:]=='.net') | 
+    #                   (domains['Domain'].str[-4:]=='.org')]
+    my_domains = [email.split('@')[1] for email in emails]
+    for domain in my_domains:
+        if 'film' in domain \
+        or 'production' in domain \
+        or 'notification' in domain \
+        or 'fest' in domain \
+        or 'sagaftra' in domain:
+            my_domains.remove(domain)
+
+    return my_domains
+
 
 def get_area_codes():
     return area_codes

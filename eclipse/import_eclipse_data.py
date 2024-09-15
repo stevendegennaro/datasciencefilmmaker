@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 import calendar
 import jdcal
 
@@ -22,6 +23,18 @@ def calculate_julian_dates(data: pd.DataFrame) -> list[float]:
         julian_date_list.append(julian_date)
     return julian_date_list
 
+def get_level_and_variance(data):
+    time_to_next = np.array(data['Time to Next'])
+    time_to_next[time_to_next > 170] = 200
+    time_to_next[(time_to_next < 170) & (time_to_next > 140)] = 100
+    time_to_next[time_to_next < 99] = 0
+    time_to_next /= 100
+    time_to_next = time_to_next.astype(np.int32)
+    data['Level'] = time_to_next
+
+    means = data.groupby('Level')['Time to Next'].mean()
+    data['Variance'] = np.array(data['Time to Next']) - np.array(means[data['Level']])
+
 def import_solar_eclipse_data() -> pd.DataFrame:
     filename = 'data/eclipse.gsfc.nasa.gov_5MCSE_5MCSEcatalog_no_header.txt'
 
@@ -42,5 +55,7 @@ def import_solar_eclipse_data() -> pd.DataFrame:
     # Calculate intervals between eclipses
     data['Time to Next'] = pd.DataFrame(data['Julian Date'].diff()).shift(-1)
     data = data[:-1]
+
+    get_level_and_variance(data)
 
     return data

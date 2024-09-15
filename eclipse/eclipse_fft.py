@@ -7,18 +7,19 @@ from import_eclipse_data import import_solar_eclipse_data
 from fourex import fourierExtrapolation
 import scipy.optimize
 from collections import Counter
+from matplotlib.widgets import Slider, Button
 
 ########################
 #### NDFT Transform ####
 ########################
 
-def julian_dates_to_x(julian_dates: list[float]) -> list[float]:
+def convert_x_for_ndft(input_x: list[float]) -> list[float]:
     '''
     The NDFT algorithm requires x values that range from [-0.5,0.5)
-    This function takes a list of Julian dates and converts them so that
+    This function takes a list of x values and converts them so that
     they cover that range
     '''
-    return (julian_dates - min(julian_dates))/(1.00001*(max(julian_dates) - min(julian_dates))) - 0.5
+    return (input_x - min(input_x))/(1.00001*(max(input_x) - min(input_x))) - 0.5
 
 def plot_ndft(x: np.array, 
               y: np.array,
@@ -89,19 +90,56 @@ def get_ndft(julian_dates: np.array,
 
     return x, y, y_r, k, f_k
 
+
+def get_ndft_frequencies(tt: np.array, yy: np.array):
+             # intervals: np.array) -> tuple[np.array,np.array,np.array,np.array,np.array]:
+    ''' Calculates the non-equispaced Fouier transform of a
+        series of data, given a list of dates and the intervals between them
+        (could be used for any date, though)
+        It then takes the x values and the fourier coefficients
+        and recreates the intervals. Process is not exact, so this 
+        will in general not be the same as the original values
+    '''
+    
+    x = convert_x_for_ndft(tt)
+    x = x[(x >= -0.5) & (x < 0.5)]
+    y = yy - np.mean(yy)
+    N_k = len(x)
+    if N_k % 2:
+        N_k += 1
+    k = -(N_k // 2) + np.arange(N_k)
+
+    print("Calculating Fourier Transform")
+    f_k = nfft.ndft_adjoint(x, y, len(k))
+
+    print("Calculating Inverse Fourier Transform")
+    # y_r = nfft.ndft(x,f_k)/len(x)
+
+    return x, y, y_r, k, f_k
+
 ##########################
 #### Create Sinusoids ####
 ##########################
 
-def sinfunc(x, A, w, p, c):
-    return A * np.sin(w*x + p) + c
+def sinfunc(x, A, w, p, c, x0 = 0):
+    return A * np.sin(w * (x - x0) + p) + c
 
 def sines_from_df(x, df, index = None):
+    '''
+    Calculates the value of a set of sinusoids at the
+    given x values from a dataframe containing the
+    sinusoid components, where each row is one sinusoid
+    with amplitude 'a', angular frequency 'w', phase 'p'
+    and offset 'c'
+
+    If you give it an index, it uses only that row number. 
+    If you give it no index, it adds all of the components.
+    '''
     if index != None:
         rows = [index, index + 1]
     else:
         rows = [0,len(df)]
-    y_hat = np.full(len(x),df.iloc[0]['mean_y'])
+    y_hat = np.zeros(len(x))
     for i in range(rows[0],rows[1]):
         y_hat += sinfunc(x, df.iloc[i]['a'], df.iloc[i]['w'], df.iloc[i]['p'], df.iloc[i]['c'])
     return y_hat
@@ -110,17 +148,15 @@ def create_sinusoids(x,
                      mean_y = 179.0, 
                      amplitude_scale: float = 1.0, 
                      period_scale: float = 10.0,
-                     n_components:int = 20,
+                     n_components: int = 20,
                      noise_amplitude: float = 0.0):
 
-    # x = np.arange(N_x)
     N_x = len(x)
 
     omegas = np.zeros(n_components)
     amplitudes = np.zeros(n_components)
     phases = np.zeros(n_components)
     offsets = np.zeros(n_components)
-    offset = 0.0
 
     x_range = max(x) - min(x)
     for i in range(n_components):
@@ -130,6 +166,7 @@ def create_sinusoids(x,
             phase = 0.0
         else:
             n_cycles =  np.abs(np.random.normal(0,period_scale))
+            # Nothing higher than nyquist to avoid aliasing
             while (2 * n_cycles > N_x):
                 n_cycles =  np.abs(np.random.normal(0,period_scale))
             amplitude = max(0,np.random.normal(amplitude_scale,0.5 * amplitude_scale))#/np.sqrt(n_components)
@@ -138,79 +175,16 @@ def create_sinusoids(x,
         omegas[i] = omega
         amplitudes[i] = amplitude
         phases[i] = phase
-        offsets[i] = offset
+        offsets[i] = 0.0
 
     parameters = pd.DataFrame({'w':omegas, 'a':amplitudes, 'p':phases, 'c':offsets})
     parameters.sort_values('a',ascending = False,inplace = True)
-    parameters['mean_y'] = mean_y
+    parameters.reset_index(inplace=True, drop=True)
+    parameters.loc[0,'c'] = parameters.loc[0,'c'] + mean_y
 
     y_noise = sines_from_df(x,parameters) + np.random.normal(0,noise_amplitude,len(x))
 
     return y_noise, parameters
-
-def toy_model(N_x: int = 1000,
-              amplitude_scale: float = 1.0,
-              random: bool = False,
-              n_components:int = 20,  
-              use_real_eclipse_dates = False,
-              interval_shift: bool = True,
-              set_xlimits:tuple[int,int] = None,
-              plot = False) -> None:
-    ''' Toy model for eclipses  
-        Creates random sinusoids or random uniform data
-        Runs NDFT on the toy model and then tries to recover
-        the original y values. Plots the results, residuals, 
-        and power spectrum
-
-        N_x = the number of x,y pairs it will create
-        amplitude_scale = amplitude of sinusoids or +-y limit of random data
-        random = use uniform random (use sinusoids if false)
-        n_components = number of sinusoids to create
-        use_real_eclipse_dates = take dates from the data itself
-        interval_shift = use the intervals between each
-            eclipse to determine the x values. If false, 
-            x values are equispaced on [-0.5,0.5)
-        zoom_f_k_graph = zoom in on the bottom graph to show detail
-        set_xlimits = high and low values of x,y to throw away before plotting
-            (still used in the analysis)
-    '''
-    average_interval = 179.0 # average time between eclipses
-
-    frequencies = []
-    if random:
-        intervals = average_interval + amplitude_scale * (np.random.rand(N_x) - 0.5)
-        zoom_f_k_graph = False
-
-    else:
-        intervals,frequencies = create_sinusoids(N_x, average_interval, amplitude_scale, n_components)
-        zoom_f_k_graph = True
-
-    if interval_shift:
-        start = 1.0e6
-        julian_dates = [start]
-        for i in range(N_x - 1):
-            julian_dates.append(julian_dates[i] + intervals[i])
-
-    else:
-        julian_dates = np.linspace(-0.5, 0.49999, num = len(intervals))
-
-    if use_real_eclipse_dates:
-        data = import_solar_eclipse_data()
-        julian_dates = data['Julian Date'].iloc[0:N_x]
-
-    x, y, y_r, k, f_k = get_ndft(julian_dates,intervals)
-
-    if plot:
-        ax = plot_ndft(x, y, y_r, k, f_k, set_xlimits)
-
-        for frequency in frequencies:
-            ax[2].axvline(frequency,color="black",zorder=0)
-            ax[2].axvline(-frequency,color="black",zorder=0)
-
-        if zoom_f_k_graph:
-            ax[2].set_xlim([-120,120])
-
-        plt.show()
 
 
 def intervals_ndft(data: pd.DataFrame, 
@@ -480,98 +454,189 @@ def plot_repeat():
     plt.plot([99,100],[y[-1],y[1]],'b:')
     plt.show()
 
-def fit_sin(tt, yy):
+def fit_sin(tt, yy, uniform = True):
     '''Fit sin to the input time sequence, and return fitting parameters "amp", "omega", "phase", "offset", "freq", "period" and "fitfunc"'''
     tt = np.array(tt)
     yy = np.array(yy)
     ff = np.fft.fftfreq(len(tt), (tt[1]-tt[0]))   # assume uniform spacing
     Fyy = abs(np.fft.fft(yy))
-    guess_freq = abs(ff[np.argmax(Fyy[1:])+1])   # excluding the zero frequency "peak", which is related to offset
 
+    guess_freq = abs(ff[np.argmax(Fyy[1:]) + 1])   # excluding the zero frequency "peak", which is related to offset
     guess_amp = np.std(yy) * 2.**0.5
     guess_offset = np.mean(yy)
     guess = np.array([guess_amp, 2.*np.pi*guess_freq, 0., guess_offset])
 
     popt, pcov = scipy.optimize.curve_fit(sinfunc, tt, yy, p0=guess,method='lm')
     A, w, p, c = popt
-    f = w/(2.*np.pi)
-    fitfunc = lambda x: A * np.sin(w*x + p) + c
 
-    # plt.ioff()
-    # fig,axes = plt.subplots(2)
-    # axes[0].plot(ff,Fyy)
-    # axes[0].axvline(guess_freq,color='k',linestyle='--')
-    # axes[0].axvline(w/2.0/np.pi,color='r',linestyle='--')
-    # fig.suptitle(f"{guess_freq}")
-
-    # axes[1].scatter(tt,yy)
-    # axes[1].plot(fitfunc(tt))
-    # plt.show()
     return {"a": A, "w": w, "p": p, "c": c}
 
 def fit_sinusoidal_components(x, y, n_to_fit):
 
     mean_y = y.mean()
-    print(f"y.mean() = {y.mean()}")
-    y = y - mean_y
+    residuals = y - mean_y
 
     # Fit and plot the sine waves
-    components = pd.DataFrame(columns=["a","w","p","c","mean_y"])
-    residuals = []
-    for i in range(0,n_to_fit + 1):
-        if i == 0:
-            residuals.append(y)
-        else:
-            residuals.append(residuals[i-1] - sines_from_df(x,components,i-1))
-        if i < n_to_fit: 
-            components.loc[len(components.index)] = fit_sin(x, residuals[i]) | {'mean_y':0.0}
+    components = pd.DataFrame(columns=["a","w","p","c"])
+    for i in range(0,n_to_fit):
+        components.loc[len(components.index)] = fit_sin(x, residuals)
+        residuals = residuals - sines_from_df(x,components,i)
+    components.loc[0,"c"] = components.loc[0,"c"] + mean_y
 
-        # print(components)
-        # plt.plot(residuals[i],'ok')
-        # plt.plot(sines_from_df(x,components,len(components.index)-1))
-        # plt.show()
+    return components
 
-    components['mean_y'] = mean_y
-    # y_hat = sines_from_df(x,components)
 
-    # # plt.plot(y_hat,'ok')
-    # plt.plot(y + mean_y -y_hat)
-    # plt.show()
 
-    return components, residuals
+
+def create_slider_plot(x_actual,y_actual):
+     
+    # x = np.linspace(0, 1, 1000)
+    x = np.linspace(min(x_actual),max(x_actual),5*len(x_actual))
+    
+    # Defining the initial parameters
+    init_amplitude = 1
+    init_offset = 0.0
+    max_frequency = np.log10(2*np.pi*len(x_actual)/(max(x_actual) - min(x_actual))/500)
+    print(max_frequency)
+    init_frequency = max_frequency
+    init_phase = 0.0
+    x0 = min(x)
+     
+    # Creating the figure and the graph line that we will update
+    fig, ax = plt.subplots(figsize=(13,7))
+    plt.plot(x_actual,y_actual,'.k')
+
+    line, = plt.plot(x, sinfunc(x, init_amplitude, init_frequency, init_phase, init_offset, x0), lw=2)
+    # ax.set_xlabel('Time [s]')
+     
+    axcolor = 'lightgoldenrodyellow'
+    ax.margins(x=0)
+     
+    # adjusting the main plot to make space for our sliders
+    plt.subplots_adjust(left=0.2, bottom=0.2)
+     
+    # Making a horizontally oriented slider to 
+    # control the frequency.
+    axfreq = plt.axes([0.25, 0.1, 0.65, 0.03], facecolor=axcolor)
+    freq_slider = Slider(
+        ax=axfreq,
+        label='w',
+        valmin=-8,
+        valmax=max_frequency,
+        valinit=init_frequency,
+        # orientation="horizontal" is Default
+    )
+    
+    axphase = plt.axes([0.25, 0.05, 0.65, 0.03], facecolor=axcolor)
+    phase_slider = Slider(
+        ax=axphase,
+        label='p',
+        valmin=0.0,
+        valmax=2 * np.pi,
+        valinit=init_phase,
+        # orientation="horizontal" is Default
+    )
+
+    # Making a vertically oriented slider to control the amplitude
+    axamp = plt.axes([0.05, 0.25, 0.0225, 0.63], facecolor=axcolor)
+    amp_slider = Slider(
+        ax=axamp,
+        label="A",
+        valmin=0,
+        valmax=3,
+        valinit=init_amplitude,
+        orientation="vertical"
+    )
+
+    # Making a vertically oriented slider to control the amplitude
+    axoff = plt.axes([0.1, 0.25, 0.0225, 0.63], facecolor=axcolor)
+    offset_slider = Slider(
+        ax=axoff,
+        label="c",
+        valmin=-1.0,
+        valmax=1.0,
+        valinit=init_offset,
+        orientation="vertical"
+    )
+     
+    # Function to be rendered anytime a slider's value changes
+    def update(val):
+        line.set_ydata(sinfunc(x, amp_slider.val, 10**freq_slider.val, phase_slider.val, offset_slider.val,x0))
+        fig.canvas.draw_idle()
+     
+    # Registering the update function with each slider Update
+    freq_slider.on_changed(update)
+    amp_slider.on_changed(update)
+    offset_slider.on_changed(update)
+    phase_slider.on_changed(update)
+     
+    plt.show()
+
+
+
+def fit_sinusoidal_components_manual(x, y, n_to_fit):
+
+    # mean_y = y.mean()
+    # residuals = y - mean_y
+    residuals = y
+
+    # Fit and plot the sine waves
+    components = pd.DataFrame(columns=["a","w","p","c"])
+    for i in range(0,n_to_fit):
+        create_slider_plot(x,residuals)
+        components.loc[len(components.index)] = fit_sin(x, residuals)
+        residuals = residuals - sines_from_df(x,components,i)
+    # components.loc[0,"c"] = components.loc[0,"c"] + mean_y
+
+    return components
 
 def plot_fits(x,
               y_actual,
               p_fit, 
-              residuals, 
               p_actual = None,
-              plot_components = False):
+              plot_components = False,
+
+              n_fits = 6):
 
     y_fit = sines_from_df(x,p_fit)
 
     if plot_components:
         # Create axes
-        max_plots = min([6,len(p_fit)])
+        max_plots = min([n_fits,len(p_fit)])
         fig, axes = plt.subplots(max_plots + 1)
 
-        # Plot each actual sinusoidal constituent on top axis
-        if p_actual is not None:
-            for i in range(min(max_plots+1,len(p_actual))):
-                axes[i].plot(x,sines_from_df(x,p_actual,i),'b-', linewidth=3)
 
+        residuals = y_fit
         for i in range(0,max_plots + 1):
-            axes[i].scatter(x, residuals[i] + p_fit.iloc[0]['mean_y'], color="lightgray")
-            if i < max_plots: 
-                axes[i].plot(x, sines_from_df(x,p_fit,i), "r--", linewidth=2)
+
+            # Plot the current y values being fit
+            axes[i].scatter(x,residuals,color="lightgray")
+
+            # Plot the actual sinusoids that were used to generate
+            # the data (if it is fake data)
+            if p_actual is not None:
+                if i < len(p_actual):
+                    axes[i].plot(x,sines_from_df(x,p_actual,i),'b-', linewidth=3)
+
+            # If it's not the final panel (which is just the 
+            # remaining residual of the entire fit)
+            if i < len(p_fit): 
+                # Plot the fit of the current component
+                axes[i].plot(x,sines_from_df(x,p_fit,i), "r--", linewidth=2)
+
+                # Calculate the next component y values
+                residuals = residuals - sines_from_df(x,p_fit,i)
 
     # Create new figure of final fit
     fig,axes = plt.subplots(2)
-    x_range = np.linspace(min(x),2*(max(x)-min(x)) + min(x),max(1000,len(x)))
+    # Extend x range to twice as long
+    # so we can see how it is extrapolating
+    x_range = np.linspace(min(x),max(x),5*len(x))
 
     if p_actual is not None: axes[0].plot(x_range, sines_from_df(x_range,p_actual), "b-")
-    # axes[0].plot(x_range,sines_from_df(x_range,p_fit),'r--')
+    axes[0].plot(x_range,sines_from_df(x_range,p_fit),'r--',zorder=0)
     axes[0].scatter(x, y_actual, color = "lightgray")
-    axes[0].scatter(x, y_fit,color = 'black',marker='.',s=2)
+    axes[0].scatter(x, y_fit,color = 'black',marker='.')
     axes[1].scatter(x, y_actual - y_fit,color = 'black',s=3)
     if p_actual is not None: axes[1].plot(x_range,sines_from_df(x_range,p_actual) - sines_from_df(x_range,p_fit))
 
@@ -592,39 +657,145 @@ def fit_test(N_x = 1000,
     if not n_to_fit: n_to_fit = n_components + 1
 
     x = np.arange(N_x)
-    x = np.linspace(-100,100,N_x)
+    x = np.linspace(991085,2460408,N_x)
     y_actual, p_actual = create_sinusoids(x = x, mean_y = 179.0, amplitude_scale = 1.0, \
                                      period_scale = period_scale, n_components = n_components, \
                                      noise_amplitude = noise_amplitude)
-    # plt.plot(x,y_actual,'ok')
-    # plt.plot(x,sines_from_df(x,p_actual))
+    p_fit = fit_sinusoidal_components(x,y_actual,n_to_fit)
+    plot_fits(x, y_actual, p_fit, p_actual, plot_components = True)
+
+    plt.show()
+
+
+def toy_model(n_components = 2):
+    N_x = 1000
+    x = np.arange(N_x)
+    x = np.linspace(991085,2460408,N_x)
+    x_range = max(x) - min(x)
+    n_cycles = 10
+
+    components = []
+    phases = 2*np.pi * np.random.random(n_components)
+    amplitudes = 1.0 + 0.1 * np.random.random(n_components) - 0.5
+    for i in range(n_components):
+        component = sines_from_df(x,pd.DataFrame({'w':[2 * np.pi * n_cycles / x_range], 'a':[amplitudes[i]], 'p':[phases[i]], 'c':[179.0]}))
+        components.append(component[i::n_components])
+    # c2 = sines_from_df(x,pd.DataFrame({'w':[2 * np.pi * n_cycles / x_range], 'a':[1.0], 'p':[np.pi], 'c':[179.0]}))
+
+    y_actual = np.ravel(components,'F')
+
+    # plt.plot(x,y_actual,'.k')
     # plt.show()
     # return
-
-    p_fit, residuals = fit_sinusoidal_components(x,y_actual,n_to_fit)
-    plot_fits(x, y_actual, p_fit, residuals, p_actual)
-
+    p_fit = fit_sinusoidal_components(x,y_actual,n_components + 1)
+    # return p_fit
+    plot_fits(x, y_actual, p_fit, plot_components = False)
     plt.show()
 
 
-def predict_next_eclipses(data, n_data_points_to_use=1000, n_predict = 100, n_frequencies = 10):
-    data = data.copy()
-    data = data[data['Time to Next'] > 170]
-    # y_actual = np.array(data[(data['Year']<=2023) | ((data['Year'] == 2024) & (data['Month'] == 4))]['Time to Next'])
-    y_actual = np.array(data['Time to Next'].head(n_data_points_to_use))
-    x = np.arange(n_data_points_to_use)
-    p_fit, residuals = fit_sinusoidal_components(x,y_actual,n_frequencies)
-    y_extend = np.array(data['Time to Next'].head(n_data_points_to_use + n_predict))
-    x_extend = np.arange(n_data_points_to_use + n_predict)
 
-    # fig, axes = plot_fits(x, y_actual, p_fit, residuals)
-    fig, axes = plot_fits(x_extend, y_extend, p_fit, residuals)
-    axes[0].axvline(n_data_points_to_use,color='lightblue',linestyle=':')
-    axes[1].axvline(n_data_points_to_use,color='lightblue',linestyle=':')
-    # axes[0].scatter(x_extend,y_extend,color = "lightblue")
-    # axes[0].scatter(x_extend, sines_from_df(x,p_fit),color = 'black',marker='.',s=2)
-    # axes[1].scatter(x, y_extend - sines_from_df(x_extend,p_fit),color = 'darkblue',s=3)
-    plt.show()
+def predict_variance(n_data_points_to_use = 1000, n_predict = 100, n_frequencies = 2):
+    data = import_solar_eclipse_data()
+    y_actual = np.array(data['Variance'])[9561 - n_data_points_to_use:9561 + n_predict]
+    x = np.arange(len(y_actual))
+    x = np.array(data['Julian Date'])[9561 - n_data_points_to_use:9561 + n_predict]
+
+
+    x_train = x[:n_data_points_to_use]
+    y_train = y_actual[:n_data_points_to_use]
+    x_test = x[-n_predict:]
+    y_test = y_actual[-n_predict:]
+
+    p_fit = fit_sinusoidal_components_manual(x_train,y_train,n_frequencies)
+    # fig, axes = plot_fits(x, y_actual, p_fit, plot_components = True)
+    # axes[0].axvline(n_data_points_to_use)
+    # plt.show()
+
+
+# def toy_model(N_x: int = 1000,
+#               amplitude_scale: float = 1.0,
+#               random: bool = False,
+#               n_components:int = 20,  
+#               use_real_eclipse_dates = False,
+#               interval_shift: bool = True,
+#               set_xlimits:tuple[int,int] = None,
+#               plot = False) -> None:
+#     ''' Toy model for eclipses  
+#         Creates random sinusoids or random uniform data
+#         Runs NDFT on the toy model and then tries to recover
+#         the original y values. Plots the results, residuals, 
+#         and power spectrum
+
+#         N_x = the number of x,y pairs it will create
+#         amplitude_scale = amplitude of sinusoids or +-y limit of random data
+#         random = use uniform random (use sinusoids if false)
+#         n_components = number of sinusoids to create
+#         use_real_eclipse_dates = take dates from the data itself
+#         interval_shift = use the intervals between each
+#             eclipse to determine the x values. If false, 
+#             x values are equispaced on [-0.5,0.5)
+#         zoom_f_k_graph = zoom in on the bottom graph to show detail
+#         set_xlimits = high and low values of x,y to throw away before plotting
+#             (still used in the analysis)
+#     '''
+#     average_interval = 179.0 # average time between eclipses
+
+#     frequencies = []
+#     if random:
+#         intervals = average_interval + amplitude_scale * (np.random.rand(N_x) - 0.5)
+#         zoom_f_k_graph = False
+
+#     else:
+#         intervals,frequencies = create_sinusoids(N_x, average_interval, amplitude_scale, n_components)
+#         zoom_f_k_graph = True
+
+#     if interval_shift:
+#         start = 1.0e6
+#         julian_dates = [start]
+#         for i in range(N_x - 1):
+#             julian_dates.append(julian_dates[i] + intervals[i])
+
+#     else:
+#         julian_dates = np.linspace(-0.5, 0.49999, num = len(intervals))
+
+#     if use_real_eclipse_dates:
+#         data = import_solar_eclipse_data()
+#         julian_dates = data['Julian Date'].iloc[0:N_x]
+
+#     x, y, y_r, k, f_k = get_ndft(julian_dates,intervals)
+
+#     if plot:
+#         ax = plot_ndft(x, y, y_r, k, f_k, set_xlimits)
+
+#         for frequency in frequencies:
+#             ax[2].axvline(frequency,color="black",zorder=0)
+#             ax[2].axvline(-frequency,color="black",zorder=0)
+
+#         if zoom_f_k_graph:
+#             ax[2].set_xlim([-120,120])
+
+#         plt.show()
+
+# def predict_next_eclipses(data, n_data_points_to_use = 1000, n_predict = 100, n_frequencies = 10):
+#     data = data.copy()
+#     data = data[data['Time to Next'] > 170]
+#     # y_actual = np.array(data[(data['Year']<=2023) | ((data['Year'] == 2024) & (data['Month'] == 4))]['Time to Next'])
+#     y_actual = np.array(data['Time to Next'].head(n_data_points_to_use))
+#     x = np.arange(n_data_points_to_use)
+#     p_fit, residuals = fit_sinusoidal_components(x,y_actual,n_frequencies)
+#     y_extend = np.array(data['Time to Next'].head(n_data_points_to_use + n_predict))
+#     x_extend = np.arange(n_data_points_to_use + n_predict)
+
+#     # fig, axes = plot_fits(x, y_actual, p_fit, residuals)
+#     fig, axes = plot_fits(x_extend, y_extend, p_fit, residuals)
+#     axes[0].axvline(n_data_points_to_use,color='lightblue',linestyle=':')
+#     axes[1].axvline(n_data_points_to_use,color='lightblue',linestyle=':')
+#     # axes[0].scatter(x_extend,y_extend,color = "lightblue")
+#     # axes[0].scatter(x_extend, sines_from_df(x,p_fit),color = 'black',marker='.',s=2)
+#     # axes[1].scatter(x, y_extend - sines_from_df(x_extend,p_fit),color = 'darkblue',s=3)
+#     plt.show()
+
+
 
 
 

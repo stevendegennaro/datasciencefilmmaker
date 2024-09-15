@@ -20,14 +20,16 @@ import tqdm
 import matplotlib.pyplot as plt
 from timeit import default_timer as timer
 
-### Import the names from file and return a dictionary
-### containing lists of first names, last names, and suffixes (e.g. Jr)
-### as well as a Vocabulary (loaded from a different file)
-### The vocab is loaded from a file and was created using this 
-### specific data set. If the network is run on a different 
-### data set, there may be characters that aren't in the 
-### vocabulary and it will need to be created
 def import_names(shuffled: bool = False) -> tuple[str,Vocabulary]:
+    '''
+		Import the names from file and return a dictionary
+		containing lists of first names, last names, and suffixes (e.g. Jr)
+		as well as a Vocabulary (loaded from a different file)
+		The vocab is loaded from a file and was created using this 
+		specific data set. If the network is run on a different 
+		data set, there may be characters that aren't in the 
+		vocabulary and it will need to be created
+    '''
     global START, STOP, maxlen
     START = "^"
     STOP = "$"
@@ -54,11 +56,13 @@ def import_names(shuffled: bool = False) -> tuple[str,Vocabulary]:
 
     return names, vocab
 
-### Shuffle names so we can split into train and test data
-### I only ran once and stored these in a file so I could
-### get a clean comparison between different networks using
-### the same train and test data
 def shuffle_names() -> dict[str: list[str]]:
+    '''
+    	Shuffle names so we can split into train and test data
+    	I only ran once and stored these in a file so I could
+    	get a clean comparison between different networks using
+    	the same train and test data
+    '''
     #Import the names from the file
     namesfile="data/all_names.json"
     with open(namesfile,"r") as f:
@@ -74,12 +78,14 @@ def shuffle_names() -> dict[str: list[str]]:
         json.dump(names,f)
     return names
 
-# Build the training set. Takes the list of names and
-# creates a list of strings and targets, e.g. "^Chuck#" becomes:
-# inputs:  ['^',    '^C',   '^Ch',  '^Chu', '^Chuc', '^Chuck']
-# targets: ['C',    'h',    'u',    'c',    'k',     '#'     ]
-# It then converts these into matrices of one-hot encoded vectors
 def build_training_set(names: list, vocab: Vocabulary) -> tuple[np.array, np.array, np.array]:
+    '''
+    	Build the training set. Takes the list of names and
+    	creates a list of strings and targets, e.g. "^Chuck#" becomes:
+    	inputs:  ['^',    '^C',   '^Ch',  '^Chu', '^Chuc', '^Chuck']
+    	targets: ['C',    'h',    'u',    'c',    'k',     '#'     ]
+    	It then converts these into matrices of one-hot encoded vectors
+    '''
 
     print(f"Building training set...")
     inputs = []
@@ -232,13 +238,6 @@ def generate(model: keras.models, vocab: Vocabulary) -> str:
 ### Run Network ###
 ###################
 
-### Creates and trains a network on entire data set and stores in a file
-    # tr = list of how many epochs to train [firstnames,lastnames]
-    # gn = number of names to generate when finished ('None' if you don't want)
-    # batch_size = keras batch_size, i.e. the number of names to run through
-    #   the network before updating. Each epoch still uses all names
-    # cont = continue from the last run?
-    # shuffled = run on the pre-shuffled list of names
 def run_network(tr: list[int,int] = [0,0], 
                 gn: int = 20,
                 batch_size: int = None, 
@@ -251,6 +250,15 @@ def run_network(tr: list[int,int] = [0,0],
                 learning_rate: float = 0.001,
                 shuffled: bool = False) -> None:
  
+    '''
+    	Creates and trains a network on entire data set and stores in a file
+    	tr = list of how many epochs to train [firstnames,lastnames]
+    	gn = number of names to generate when finished ('None' if you don't want)
+    	batch_size = keras batch_size, i.e. the number of names to run through
+    	  the network before updating. Each epoch still uses all names
+    	cont = continue from the last run?
+    	shuffled = run on the pre-shuffled list of names
+    '''
     start_time = datetime.now()
     print(f"Start time = ",start_time.strftime('%H:%M:%S'))
 
@@ -316,10 +324,12 @@ def run_network(tr: list[int,int] = [0,0],
     difference = end_time - start_time
     print(f"Total run time = ",difference)
 
-### Generate a list of n_players, first and last names
-### Does not generate suffixes because at the moment
-### I can't be bothered and they are not part of my analysis
 def generate_players(file_stem: str, n_players: int) -> dict[str: list[str]]:
+    '''
+    	Generate a list of n_players, first and last names
+    	Does not generate suffixes because at the moment
+    	I can't be bothered and they are not part of my analysis
+    '''
 
     global maxlen
     names, vocab = import_names()
@@ -344,14 +354,14 @@ def generate_players(file_stem: str, n_players: int) -> dict[str: list[str]]:
     return generated_names
 
 
-
-
-### Tests how long it takes to generate n_players first names
-### Then calculates how many of those names are already
-### in the first names list. Repeats for last names. Returns
-### a dictionary with lists of the duplicates
 def generation_test(file_stem: str, n_players: int) -> \
         tuple[dict[str: list[str]],dict[str: float],dict[str: float]]:
+    '''
+		Tests how long it takes to generate n_players first names
+		Then calculates how many of those names are already
+		in the first names list. Repeats for last names. Returns
+		a dictionary with lists of the duplicates
+    '''
 
     global maxlen
     # tf.compat.v1.disable_eager_execution()

@@ -1,5 +1,6 @@
 on run {phoneNum, msg}
     tell application "Messages"
-        send msg to buddy phoneNum of service "SMS"
+        set SMSService to 1st account whose service type = SMS
+        send msg to buddy phoneNum of SMSService
     end tell
 end run

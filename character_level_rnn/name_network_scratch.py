@@ -14,11 +14,13 @@ from timeit import default_timer as timer
 from collections import Counter
 
 
-# Import the names from the file,
-# add the START and STOP characters,
-# and put into separate lists for first and last names and suffixes
-# Output to a tuple
 def import_names(namesfile: str = "data/all_names.json") -> Tuple:
+    '''
+		Import the names from the file,
+		add the START and STOP characters,
+		and put into separate lists for first and last names and suffixes
+		Output to a tuple
+    '''
     # Define the start and end characters of every name
     global START, STOP
     START = "^"
@@ -70,7 +72,7 @@ def plot_history(history: pd.DataFrame, color:str = "black") -> None:
     plt.draw()
     plt.pause(0.1)
 
-#### Main training loop, called by other functions
+
 def train(model: Model, 
           train_names: pd.DataFrame,
           test_names: pd.DataFrame, 
@@ -82,7 +84,9 @@ def train(model: Model,
           weight_file: str,
           plot_histories: bool = False
          ) -> None:
-
+    '''
+        Main training loop, called by other functions
+    '''
     start_time = datetime.now()
     print(f"Training start time = ",start_time.strftime('%H:%M:%S'))
 
@@ -177,13 +181,6 @@ def create_model(vocab: Vocabulary,
     model = Model([rnn1,rnn2,linear],loss,optimizer)
     return model
 
-#### Main method to train a network from scratch 
-#### or continue from a previous training session
-    # tr =  train the network
-    # cont = continue training from previous weights
-    # gen = generate names when done training
-    # batch_size = subset of entire data to train on per epoch
-    # plot = plot the loss and accuracy after each epoch at runtime
 def run_network(which_names: str = 'lastnames', 
                   tr: bool = True, 
                   learning_rate = 0.01,
@@ -193,6 +190,15 @@ def run_network(which_names: str = 'lastnames',
                   batch_size: int = None,
                   n_epochs: int = 10,
                   plot: bool = True) -> None:
+    '''
+		Main method to train a network from scratch 
+		or continue from a previous training session
+    		tr =  train the network
+    		cont = continue training from previous weights
+    		gen = generate names when done training
+    		batch_size = subset of entire data to train on per epoch
+    		plot = plot the loss and accuracy after each epoch at runtime
+    '''
 
     # These are used to plot our progess during training
     global elapsed_time
@@ -269,9 +275,11 @@ def run_network(which_names: str = 'lastnames',
         with open('weights/generated_test.txt',"a") as f:
             json.dump(generated_names,f)
 
-#### Generate a batch of first and last names 
-#### based on final weights from the training sessions
 def generate_players(n_players: int) -> List:
+    '''
+        Generate a batch of first and last names 
+        based on final weights from the training sessions
+    '''
     
     vocab_file = f"finalweights/vocab.txt"
     vocab = load_vocab(vocab_file)
@@ -371,11 +379,13 @@ def training_speed_test(n_epochs: int,
         plt.ioff()
 
 
-### Tests how long it takes to generate n_players names
-### Then calculates how many of those names are already
-### in the names list. Repeats for last names. Returns a
-### dictionary with lists of the duplicates
 def generation_test(n_players: int) -> dict:
+    '''
+    	Tests how long it takes to generate n_players names
+    	Then calculates how many of those names are already
+    	in the names list. Repeats for last names. Returns a
+    	dictionary with lists of the duplicates
+    '''
     vocab_file = f"finalweights/vocab.txt"
     vocab = load_vocab(vocab_file)
     
@@ -423,10 +433,11 @@ def generation_test(n_players: int) -> dict:
 
     return generated_names, duplicates, percent_recreated, difference
 
-
-### Find the accuracy of a trained network using either
-### 'sample_from' or 'argmax'
 def manual_accuracy_test(which:str = 'first', method:str = 'argmax') -> None:
+    '''
+    	Find the accuracy of a trained network using either
+    	'sample_from' or 'argmax'
+    '''
 
     global START, STOP, maxlen
     START = "^"
@@ -458,35 +469,41 @@ def manual_accuracy_test(which:str = 'first', method:str = 'argmax') -> None:
 
     print(f"Total accuracy is {accuracy*100:.2f}% for {which}names using method '{method}'")
 
-### Takes a list of letters that may contain duplicates
-### Returns the maximum accuracy one could acheive by
-### choosing a letter at random according to its frequency in the list
-### and then "predicting" that letter, also according to the
-### frequency in the list. Put another way, if you draw two 
-### letters randomly from the list (with replacement),
-### what are the odds that you draw the same letter twice?
 def predict_accuracy(letters_list):
+    '''
+		Takes a list of letters that may contain duplicates
+		Returns the maximum accuracy one could acheive by
+		choosing a letter at random according to its frequency in the list
+		and then "predicting" that letter, also according to the
+		frequency in the list. Put another way, if you draw two 
+		letters randomly from the list (with replacement),
+		what are the odds that you draw the same letter twice?
+    '''
     count = Counter(letters_list)
     probs = np.array(list(count.values()))
     sum_of_squares = np.sum(probs**2)
     square_of_sum = np.sum(probs)**2
     return sum_of_squares / square_of_sum
 
-# What if instead of drawing from the list of letter with 
-# frequency given by the list, we instead always draw
-# the most frequent letter in the list (or if there is a
-# tie, we choose at random from among the ties)
 def get_most_likely(letters_list):
+    '''
+		What if instead of drawing from the list of letter with 
+		frequency given by the list, we instead always draw
+		the most frequent letter in the list (or if there is a
+		tie, we choose at random from among the ties)
+    '''
     count = dict(Counter(letters_list))
     most_likely = np.random.choice([key for key, value in count.items() if value == max(count.values())])
     prob = count[most_likely]/sum(count.values())
     return prob
 
-### Calculate the theoretical maximum accuracy of the network, 
-### given the list of names, choosing a letter at random from
-### among the possible choices for that input, with frequency
-### given by their frequency in the list
 def calculate_max_accuracy() -> float:
+    '''
+		Calculate the theoretical maximum accuracy of the network, 
+		given the list of names, choosing a letter at random from
+		among the possible choices for that input, with frequency
+		given by their frequency in the list
+    '''
 
     # Import the names and stick them in a dictionary
     firstnames, lastnames, suffixes = import_names()
@@ -521,10 +538,12 @@ def calculate_max_accuracy() -> float:
             
         print(accuracy)
 
-### Calculate the theoretical maximum accuracy of the network, 
-### given the list of names, always choosing the most likely
-### letter (i.e. the mode) for a given input
 def calculate_max_likelihood() -> float:
+    '''
+        Calculate the theoretical maximum accuracy of the network, 
+        given the list of names, always choosing the most likely
+        letter (i.e. the mode) for a given input
+    '''
 
     # Import the names and stick them in a dictionary
     firstnames, lastnames, suffixes = import_names()
