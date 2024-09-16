@@ -40,7 +40,10 @@ for i in range(len(names)):
     names[i] = newname.strip()
 
 def get_company_name():
-    return np.random.choice(names)
+    name = np.random.choice(names)
+    if len(name.split()) > 4:
+        name = np.random.choice(names)
+    return name
 
 # for _ in range(100):
 #   print(get_company_name())

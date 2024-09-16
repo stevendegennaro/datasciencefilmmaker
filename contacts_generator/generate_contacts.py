@@ -157,9 +157,13 @@ for i in range(len(full_names)):
     full_names['Email'][i] = generate_email(i)
 
     #get rid of most middle names. For the ones we keep, combine with the first name
-    if full_names['Middle'][i] in common_middles:
-        full_names['First'][i] = full_names['First'][i] + ' ' + full_names['Middle'][i]
-    full_names['Middle'][i] = ''
+    # if full_names['Middle'][i] in common_middles:
+    #     full_names['First'][i] = full_names['First'][i] + ' ' + full_names['Middle'][i]
+    # full_names['Middle'][i] = ''
+
+    #get rid of most middle names.
+    if full_names['Middle'][i] not in common_middles:
+        full_names['Middle'][i] = ''
 
     if initials in nicknames:
         #keep some fraction of these instead of first names
