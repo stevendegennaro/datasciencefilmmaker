@@ -7,7 +7,7 @@ fetch('google_api_key.txt')
   .then(response => response.text())
   .then((data) => {
     api_key = data.trim();
-    var scriptFileName = "https://maps.googleapis.com/maps/api/js?key=" + api_key + "&callback=initMap";
+    var scriptFileName = "https://maps.googleapis.com/maps/api/js?key=" + api_key + "&loading=async&callback=initMap";
     var scriptElement = document.getElementById("load_google_maps_api");
     scriptElement.src = scriptFileName;
     document.head.appendChild(scriptElement);

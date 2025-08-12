@@ -172,20 +172,20 @@ def filter_jobs(new_jobs:pd.DataFrame) -> pd.DataFrame:
     new_jobs = new_jobs[new_jobs['Role'].str.contains('High')]
 
     # Always include half-day assignments on M, W, F (0,2,4)
-    half_day = (
-                    (new_jobs['Job Start Date'].dt.dayofweek.isin([0,2,4])) & 
-                    (new_jobs['Day Count'] == 1) & 
-                    (new_jobs["End Time"] < 14)
-               )
+    # half_day = (
+    #                 (new_jobs['Job Start Date'].dt.dayofweek.isin([0,2,4])) & 
+    #                 (new_jobs['Day Count'] == 1) & 
+    #                 (new_jobs["End Time"] < 14)
+    #            )
 
     # Don't inlcude jobs that are only afternoon jobs
-    afternoon_only = new_jobs["Start Time"] > 10
+    # afternoon_only = new_jobs["Start Time"] > 10
 
     # Don't include all day jobs on M and W
-    mw_all_day = (
-                    (new_jobs['Job Start Date'].dt.dayofweek.isin([0,2])) & 
-                    (new_jobs["End Time"] > 14)
-                 )
+    #mw_all_day = (
+    #                (new_jobs['Job Start Date'].dt.dayofweek.isin([0,2])) & 
+    #                (new_jobs["End Time"] > 14)
+    #             )
 
     # Only at certain schools, 
     hs_list = info["hs_list"]
@@ -193,23 +193,23 @@ def filter_jobs(new_jobs:pd.DataFrame) -> pd.DataFrame:
 
     # Put all the masks together
     combined_mask = (
-                        half_day | 
-                        (
-                            pd.concat(hs_masks, axis=1).any(axis=1) & 
-                            (~afternoon_only) &
-                            #(~mw_all_day) &
-                            # Only include jobs that are 2 days or fewer
-                            (new_jobs['Day Count'] <= 2) &
-                            # Only include jobs that are in the next 30 days
-                            ((new_jobs["Job Start Date"] - dt.datetime.today()).dt.days < 30)
-                        )
+                        # half_day | 
+                        # (
+                        pd.concat(hs_masks, axis=1).any(axis=1) & 
+                        # (~afternoon_only) &
+                        # (~mw_all_day) &
+                        # Only include jobs that are 5 days or fewer
+                        (new_jobs['Day Count'] <= 5) &
+                        # Only include jobs that are in the next 30 days
+                        ((new_jobs["Job Start Date"] - dt.datetime.today()).dt.days < 30)
+                        # )
                     )
     filtered_jobs = new_jobs[combined_mask]
 
     # Remove jobs on days that I already have a job
-    if len(filtered_jobs) > 0:
-        my_scehduled_jobs = get_my_scheduled_jobs()
-        filtered_jobs = filtered_jobs[~filtered_jobs['Job Start Date'].dt.date.isin(my_scehduled_jobs)]
+    # if len(filtered_jobs) > 0:
+    #     my_scehduled_jobs = get_my_scheduled_jobs()
+    #     filtered_jobs = filtered_jobs[~filtered_jobs['Job Start Date'].dt.date.isin(my_scehduled_jobs)]
 
     return filtered_jobs
 
@@ -271,6 +271,8 @@ if __name__ == "__main__":
                  # (defaults to 10 minutes, gets changed below
                  # at certain times of day on certain days of the week
 
+    s = 60
+
     # Main Loop
     while True:
 
@@ -285,11 +287,11 @@ if __name__ == "__main__":
             sys.exit()
 
         now = dt.datetime.now()
-        # If it's a weekday evening between 6am and 10pm, or if it's Sunday night between 5 and 10,
+        # If it's a weekday between 6am and 10pm, or if it's Sunday night between 5 and 10,
         # Check every 2 minutes
         if (now.isoweekday() <= 5 and is_time_between(dt.time(6,0), dt.time(22,0), now.time())) or \
            (now.isoweekday() == 7 and is_time_between(dt.time(15,0), dt.time(22,0), now.time())):
-            s = 120
+            s = 60
 
         try:
             available_jobs = get_current_available_jobs()
