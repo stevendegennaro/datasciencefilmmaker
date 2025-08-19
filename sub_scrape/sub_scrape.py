@@ -30,8 +30,11 @@ def get_current_available_jobs() -> pd.DataFrame:
     Returns the result as a pandas DataFrame
     '''
     print("Retrieving current jobs...")
- 
-    # Open the web page
+
+    # Open the browser in the background
+    op = webdriver.ChromeOptions()
+    op.add_argument('headless')
+    driver = webdriver.Chrome(options=op)
     driver.get(info["url"])
 
     # Enter ssn and password and click Sign On button
@@ -65,6 +68,8 @@ def get_current_available_jobs() -> pd.DataFrame:
     available_jobs['Download Time'] = now
     available_jobs['Unavailable Time'] = pd.NaT
     available_jobs.drop_duplicates(inplace = True)
+
+    driver.quit()
 
     return available_jobs
 
@@ -172,20 +177,20 @@ def filter_jobs(new_jobs:pd.DataFrame) -> pd.DataFrame:
     new_jobs = new_jobs[new_jobs['Role'].str.contains('High')]
 
     # Always include half-day assignments on M, W, F (0,2,4)
-    # half_day = (
-    #                 (new_jobs['Job Start Date'].dt.dayofweek.isin([0,2,4])) & 
-    #                 (new_jobs['Day Count'] == 1) & 
-    #                 (new_jobs["End Time"] < 14)
-    #            )
+    half_day = (
+                    (new_jobs['Job Start Date'].dt.dayofweek.isin([0,2,4])) & 
+                    (new_jobs['Day Count'] == 1) & 
+                    (new_jobs["End Time"] < 14)
+               )
 
     # Don't inlcude jobs that are only afternoon jobs
-    # afternoon_only = new_jobs["Start Time"] > 10
+    afternoon_only = new_jobs["Start Time"] > 10
 
     # Don't include all day jobs on M and W
-    #mw_all_day = (
-    #                (new_jobs['Job Start Date'].dt.dayofweek.isin([0,2])) & 
-    #                (new_jobs["End Time"] > 14)
-    #             )
+    mw_all_day = (
+                   (new_jobs['Job Start Date'].dt.dayofweek.isin([0,2])) & 
+                   (new_jobs["End Time"] > 14)
+                )
 
     # Only at certain schools, 
     hs_list = info["hs_list"]
@@ -193,16 +198,16 @@ def filter_jobs(new_jobs:pd.DataFrame) -> pd.DataFrame:
 
     # Put all the masks together
     combined_mask = (
-                        # half_day | 
-                        # (
+                        half_day | 
+                        (
                         pd.concat(hs_masks, axis=1).any(axis=1) & 
-                        # (~afternoon_only) &
-                        # (~mw_all_day) &
+                        (~afternoon_only) &
+                        (~mw_all_day) &
                         # Only include jobs that are 5 days or fewer
                         (new_jobs['Day Count'] <= 5) &
                         # Only include jobs that are in the next 30 days
                         ((new_jobs["Job Start Date"] - dt.datetime.today()).dt.days < 30)
-                        # )
+                        )
                     )
     filtered_jobs = new_jobs[combined_mask]
 
@@ -258,15 +263,11 @@ def send_message(message: str) -> None:
 ##############
 if __name__ == "__main__":
 
-    # Open the browser in the background
-    op = webdriver.ChromeOptions()
-    op.add_argument('headless')
-    driver = webdriver.Chrome(options=op)
-
     with open("info.txt","r") as f:
         info = json.load(f)
 
     last_error = None
+    timeOutCount = 0
     s = 600      # Time to sleep between loops, in seconds
                  # (defaults to 10 minutes, gets changed below
                  # at certain times of day on certain days of the week
@@ -289,9 +290,9 @@ if __name__ == "__main__":
         now = dt.datetime.now()
         # If it's a weekday between 6am and 10pm, or if it's Sunday night between 5 and 10,
         # Check every 2 minutes
-        if (now.isoweekday() <= 5 and is_time_between(dt.time(6,0), dt.time(22,0), now.time())) or \
-           (now.isoweekday() == 7 and is_time_between(dt.time(15,0), dt.time(22,0), now.time())):
-            s = 60
+        # if (now.isoweekday() <= 5 and is_time_between(dt.time(6,0), dt.time(22,0), now.time())) or \
+        #    (now.isoweekday() == 7 and is_time_between(dt.time(15,0), dt.time(22,0), now.time())):
+        #     s = 60
 
         try:
             available_jobs = get_current_available_jobs()
@@ -304,19 +305,25 @@ if __name__ == "__main__":
             if last_error:
                 send_message(f"Code has resumed at {dt.datetime.now()}")
                 last_error = None
+                timeOutCount = 0
 
         except Exception as e:
             tb = traceback.format_exc()
             print(tb)
             with open("log.txt","a") as f:
                 f.write(str(tb) + "\n")
+
+            # Timeout excpetions happen really often and I don't need to know about them unless
+            # something is permanently wrong. So don't text me unless you've seen at least five of them.
+            if type(e).__name__ == "TimeoutException":
+                timeOutCount = timeOutCount + 1
+                if timeOutCount == 5:
+                    send_message(f"System down at {dt.datetime.now()}\n{type(e).__name__}\n")
+                    last_error = e
             # If this isn't just a repeat of the last exception, then
-            if type(e) is not type(last_error) or e.args != last_error.args:
+            elif type(e) is not type(last_error) or e.args != last_error.args:
                 # send a notification about the exception
                 send_message(f"System down at {dt.datetime.now()}\n{type(e).__name__}\n{str(e)[:100]} ")
                 last_error = e
                 
-        if last_error:
-            time.sleep(60)
-        else:
-            time.sleep(s)
+        time.sleep(s)
